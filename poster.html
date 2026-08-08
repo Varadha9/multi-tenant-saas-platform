@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1440" />
+<title>Multi-Tenant SaaS Platform — Poster</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    width: 1440px;
+    height: 810px;
+    overflow: hidden;
+    background: #fff;
+  }
+
+  /* ── HEADER ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #b3c6e7;
+    padding: 0 28px;
+    height: 108px;
+    border-bottom: 3px solid #2e5395;
+  }
+  .header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .header-left .college {
+    font-size: 13px;
+    font-weight: 700;
+    color: #1a1a2e;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .header-left .dept {
+    font-size: 11px;
+    font-weight: 600;
+    color: #2e5395;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .header-left .meta {
+    font-size: 10px;
+    color: #333;
+    margin-top: 2px;
+  }
+  .header-center {
+    text-align: center;
+    flex: 1;
+    padding: 0 20px;
+  }
+  .header-center .project-title {
+    font-size: 22px;
+    font-weight: 900;
+    color: #1a1a2e;
+    line-height: 1.1;
+    letter-spacing: -0.3px;
+  }
+  .header-center .tagline {
+    font-size: 11px;
+    color: #2e5395;
+    font-weight: 500;
+    margin-top: 4px;
+    font-style: italic;
+  }
+  .header-center .members {
+    font-size: 10px;
+    color: #333;
+    margin-top: 5px;
+    font-weight: 600;
+  }
+  .header-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    min-width: 200px;
+  }
+  .header-right span {
+    font-size: 10px;
+    color: #1a1a2e;
+    font-weight: 600;
+  }
+
+  /* ── MAIN GRID ── */
+  .main {
+    display: grid;
+    grid-template-columns: 290px 1fr 1fr;
+    height: 660px;
+    gap: 0;
+  }
+
+  /* ── LEFT COLUMN ── */
+  .col-left {
+    background: #fff;
+    padding: 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-right: 2px solid #e0e0e0;
+  }
+
+  /* ── MIDDLE COLUMN ── */
+  .col-mid {
+    background: #2e5395;
+    padding: 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-right: 2px solid #1a3a6e;
+  }
+
+  /* ── RIGHT COLUMN ── */
+  .col-right {
+    background: #2e5395;
+    padding: 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* ── SECTION CARD ── */
+  .card {
+    border-radius: 8px;
+    padding: 10px 12px;
+    flex-shrink: 0;
+  }
+  .card-white {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+  }
+  .card-dark {
+    background: #0d1e2e;
+    color: #fff;
+  }
+  .card-yellow {
+    background: #fde499;
+    border: 1px solid #e6c84a;
+  }
+  .card-teal {
+    background: #a5d4d8;
+  }
+  .card-pink {
+    background: #ffb0de;
+  }
+  .card-lavender {
+    background: #d0bcfc;
+  }
+  .card-orange {
+    background: #ff904d;
+    color: #fff;
+  }
+  .card-light {
+    background: #eef2fa;
+    border: 1px solid #c5d3ea;
+  }
+
+  .card-title {
+    font-size: 9.5px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 6px;
+    color: #2e5395;
+  }
+  .card-dark .card-title,
+  .card-orange .card-title {
+    color: #fde499;
+  }
+  .card-yellow .card-title {
+    color: #7a5c00;
+  }
+  .card-teal .card-title {
+    color: #1a4a4e;
+  }
+  .card-pink .card-title {
+    color: #6b0040;
+  }
+  .card-lavender .card-title {
+    color: #3d1a7a;
+  }
+
+  .card p, .card li {
+    font-size: 9px;
+    line-height: 1.55;
+    color: #222;
+  }
+  .card-dark p, .card-dark li {
+    color: #d0dff5;
+  }
+  .card-orange p {
+    color: #fff;
+  }
+  ul { padding-left: 13px; }
+  li { margin-bottom: 2px; }
+
+  /* ── PROBLEM STATEMENT ── */
+  .problem-card {
+    background: #0d1e2e;
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .problem-card .card-title { color: #fde499; }
+  .problem-card p { color: #c8d8f0; font-size: 9px; line-height: 1.6; }
+
+  /* ── EMPATHY MAP ── */
+  .empathy-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 5px;
+    flex: 1;
+  }
+  .empathy-cell {
+    border-radius: 6px;
+    padding: 7px 9px;
+  }
+  .empathy-cell .label {
+    font-size: 8px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .empathy-cell p {
+    font-size: 8.5px;
+    line-height: 1.5;
+  }
+  .e-says  { background: #fde499; }
+  .e-says .label  { color: #7a5c00; }
+  .e-feels { background: #ffb0de; }
+  .e-feels .label { color: #6b0040; }
+  .e-thinks{ background: #a5d4d8; }
+  .e-thinks .label{ color: #1a4a4e; }
+  .e-does  { background: #d0bcfc; }
+  .e-does .label  { color: #3d1a7a; }
+
+  /* ── APP FLOW ── */
+  .flow-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .flow-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .step-num {
+    background: #2e5395;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 800;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .col-mid .step-num, .col-right .step-num {
+    background: #fde499;
+    color: #1a1a2e;
+  }
+  .step-text {
+    font-size: 9px;
+    line-height: 1.5;
+    color: #222;
+  }
+  .col-mid .step-text, .col-right .step-text {
+    color: #d0dff5;
+  }
+  .step-title {
+    font-weight: 700;
+    display: block;
+  }
+
+  /* ── MODULE PILLS ── */
+  .module-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+  }
+  .module-pill {
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: #eef2fa;
+    border-left: 3px solid #2e5395;
+  }
+  .module-pill .mod-name {
+    font-size: 9px;
+    font-weight: 800;
+    color: #2e5395;
+    display: block;
+  }
+  .module-pill .mod-desc {
+    font-size: 8px;
+    color: #444;
+    line-height: 1.4;
+  }
+
+  /* ── RBAC ROLES ── */
+  .role-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .role-badge {
+    font-size: 8px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 10px;
+    min-width: 52px;
+    text-align: center;
+  }
+  .role-owner  { background: #fde499; color: #7a5c00; }
+  .role-admin  { background: #ff904d; color: #fff; }
+  .role-manager{ background: #a5d4d8; color: #1a4a4e; }
+  .role-staff  { background: #d0bcfc; color: #3d1a7a; }
+  .role-desc {
+    font-size: 8.5px;
+    color: #d0dff5;
+    line-height: 1.4;
+  }
+
+  /* ── TECH STACK ── */
+  .tech-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+  .tech-item {
+    background: rgba(255,255,255,0.1);
+    border-radius: 5px;
+    padding: 4px 7px;
+    font-size: 8.5px;
+    color: #d0dff5;
+  }
+  .tech-item span {
+    font-weight: 700;
+    color: #fde499;
+    display: block;
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  /* ── SECTION TITLE (white cols) ── */
+  .section-title {
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #2e5395;
+    border-bottom: 2px solid #2e5395;
+    padding-bottom: 4px;
+    margin-bottom: 7px;
+  }
+  .col-mid .section-title,
+  .col-right .section-title {
+    color: #fde499;
+    border-bottom-color: #fde499;
+  }
+
+  /* ── FOOTER ── */
+  .footer {
+    background: #091a29;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+  }
+  .footer span {
+    font-size: 9px;
+    color: #7a9cc0;
+  }
+  .footer .footer-center {
+    font-size: 9px;
+    color: #fde499;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+
+  /* ── DIVIDER ── */
+  .divider {
+    height: 1px;
+    background: rgba(255,255,255,0.15);
+    margin: 2px 0;
+  }
+
+  .highlight { color: #fde499; font-weight: 700; }
+  .text-white { color: #fff; }
+  .text-light { color: #d0dff5; }
+
+  /* ── SOLUTION POINTS ── */
+  .solution-point {
+    display: flex;
+    gap: 7px;
+    margin-bottom: 5px;
+    align-items: flex-start;
+  }
+  .sol-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fde499;
+    color: #1a1a2e;
+    font-size: 8px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .sol-text { font-size: 9px; color: #d0dff5; line-height: 1.5; }
+  .sol-text strong { color: #fff; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════ HEADER -->
+<div class="header">
+  <div class="header-left">
+    <span class="college">MIT School of Computing</span>
+    <span class="dept">Department of Information Technology</span>
+    <span class="meta">Class: TY-SMAD &nbsp;|&nbsp; Group ID: LYSMAD05</span>
+    <span class="meta">Guide: Prof. Reetika Kerketta</span>
+  </div>
+
+  <div class="header-center">
+    <div class="project-title">Multi-Tenant SaaS Platform</div>
+    <div class="tagline">One platform. Every business. Only what you need.</div>
+    <div class="members">
+      1. Poonawala Ibrahim Hussain &nbsp;&nbsp;
+      2. Mandhare Varad Vikas &nbsp;&nbsp;
+      3. Tanmay Sudhir Shinde
+    </div>
+  </div>
+
+  <div class="header-right">
+    <span>TY-SMAD &nbsp;|&nbsp; 2024–25</span>
+    <span>Node.js · React.js · PostgreSQL</span>
+    <span>AWS · JWT · RBAC</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ MAIN -->
+<div class="main">
+
+  <!-- ════════════════════════════════════════ LEFT COLUMN -->
+  <div class="col-left">
+
+    <!-- Problem Statement -->
+    <div class="problem-card">
+      <div class="card-title">Problem Statement</div>
+      <p>
+        India's 63 million small businesses run on WhatsApp groups, shared Excel files, and paper registers.
+        Their data is scattered, unsecured, and disconnected across tools that don't talk to each other.
+        Enterprise tools like Salesforce cost <strong style="color:#fde499">₹40,000+/month</strong> and take months to set up —
+        completely out of reach for small teams. There is no affordable, simple, all-in-one solution built for them.
+      </p>
+    </div>
+
+    <!-- User Empathy Map -->
+    <div>
+      <div class="section-title">User Empathy Map</div>
+      <div class="empathy-grid">
+        <div class="empathy-cell e-says">
+          <div class="label">💬 Says</div>
+          <p>"Our stock data is on my manager's laptop."<br>"We track leads on WhatsApp — it's a mess."</p>
+        </div>
+        <div class="empathy-cell e-feels">
+          <div class="label">❤️ Feels</div>
+          <p>Frustrated by constant data loss. Anxious about scaling with no proper system in place.</p>
+        </div>
+        <div class="empathy-cell e-thinks">
+          <div class="label">💭 Thinks</div>
+          <p>"There must be a better way but it's too expensive." "I don't have time to learn complex software."</p>
+        </div>
+        <div class="empathy-cell e-does">
+          <div class="label">🖐 Does</div>
+          <p>Maintains 4–5 disconnected spreadsheets. Uses WhatsApp for operations and customer support.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scope & Feasibility -->
+    <div class="card card-light">
+      <div class="card-title">Scope &amp; Feasibility</div>
+      <p>
+        Technically feasible using proven technologies — React.js frontend, Node.js + Express backend,
+        PostgreSQL with tenant-scoped queries, and AWS for hosting. MVP covers 4 modules for Indian SMBs.
+        Architecture supports future expansion: additional modules, third-party marketplace, and white-labeling.
+      </p>
+    </div>
+
+  </div>
+
+  <!-- ════════════════════════════════════════ MIDDLE COLUMN -->
+  <div class="col-mid">
+
+    <!-- Ideation -->
+    <div>
+      <div class="section-title">Ideation — Key Objectives</div>
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="step-num">1</div>
+          <div class="step-text">
+            <span class="step-title">Multi-Tenant Workspaces</span>
+            Every business gets a fully isolated workspace with its own subdomain (<span class="highlight">acme.platform.com</span>). Data is scoped at the database level — no business can ever see another's data.
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">2</div>
+          <div class="step-text">
+            <span class="step-title">Plug-and-Play Module System</span>
+            Businesses activate only what they need: CRM, Inventory, HRMS, or HelpDesk. Unused modules stay off. Data is preserved when reactivated.
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">3</div>
+          <div class="step-text">
+            <span class="step-title">Role-Based Access Control (RBAC)</span>
+            Four roles: Owner → Admin → Manager → Staff. Enforced at the API middleware level on every request — not just hidden in the UI.
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">4</div>
+          <div class="step-text">
+            <span class="step-title">Unified Data Across Modules</span>
+            All modules share one database. A contact in CRM is the same record linked in HelpDesk. No more reconciling data across disconnected tools.
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">5</div>
+          <div class="step-text">
+            <span class="step-title">Affordable &amp; Instant Setup</span>
+            Freemium model. No per-user pricing trap. A business can sign up and be fully operational in under <span class="highlight">10 minutes</span>.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Modules -->
+    <div>
+      <div class="section-title">Platform Modules</div>
+      <div class="module-grid">
+        <div class="module-pill">
+          <span class="mod-name">📊 CRM</span>
+          <span class="mod-desc">Leads, contacts, deals &amp; sales pipeline for sales teams</span>
+        </div>
+        <div class="module-pill">
+          <span class="mod-name">📦 Inventory</span>
+          <span class="mod-desc">Products, stock levels, orders &amp; supplier management</span>
+        </div>
+        <div class="module-pill">
+          <span class="mod-name">👥 HRMS</span>
+          <span class="mod-desc">Employees, attendance, leave management &amp; payroll</span>
+        </div>
+        <div class="module-pill">
+          <span class="mod-name">🎫 HelpDesk</span>
+          <span class="mod-desc">Support tickets, agent assignment &amp; resolution tracking</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- RBAC -->
+    <div>
+      <div class="section-title">Role-Based Access Control</div>
+      <div class="role-row">
+        <span class="role-badge role-owner">Owner</span>
+        <span class="role-desc">Full control — billing, workspace deletion, all settings</span>
+      </div>
+      <div class="role-row">
+        <span class="role-badge role-admin">Admin</span>
+        <span class="role-desc">Manage members, activate modules, all operational access</span>
+      </div>
+      <div class="role-row">
+        <span class="role-badge role-manager">Manager</span>
+        <span class="role-desc">Approve leaves, assign tickets, manage within module</span>
+      </div>
+      <div class="role-row">
+        <span class="role-badge role-staff">Staff</span>
+        <span class="role-desc">Day-to-day work — create &amp; update records, cannot delete</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ════════════════════════════════════════ RIGHT COLUMN -->
+  <div class="col-right">
+
+    <!-- App Flow -->
+    <div>
+      <div class="section-title">App Flow</div>
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="step-num">01</div>
+          <div class="step-text">
+            <span class="step-title">Sign Up &amp; Create Workspace</span>
+            Business owner registers → isolated workspace created with unique subdomain instantly.
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">02</div>
+          <div class="step-text">
+            <span class="step-title">Activate Modules</span>
+            Toggle on CRM, Inventory, HRMS, or HelpDesk from workspace settings. Only pay for what you use.
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">03</div>
+          <div class="step-text">
+            <span class="step-title">Invite Team &amp; Assign Roles</span>
+            Send email invites to team members. Assign Owner / Admin / Manager / Staff roles per person.
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">04</div>
+          <div class="step-text">
+            <span class="step-title">Start Working</span>
+            Sidebar shows only active modules. Every user sees only what their role permits.
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-num">05</div>
+          <div class="step-text">
+            <span class="step-title">Full Audit Trail</span>
+            Every action is logged — who created, edited, or deleted what, and when. Data stays in the cloud.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Proposed Solution -->
+    <div>
+      <div class="section-title">Proposed Solution</div>
+      <div class="solution-point">
+        <div class="sol-icon">✦</div>
+        <div class="sol-text"><strong>Platform, not a product</strong> — businesses assemble their own toolset by activating modules, like Shopify apps.</div>
+      </div>
+      <div class="solution-point">
+        <div class="sol-icon">✦</div>
+        <div class="sol-text"><strong>True data isolation</strong> — every query is scoped with <span class="highlight">tenant_id</span> at the database level, not just the UI.</div>
+      </div>
+      <div class="solution-point">
+        <div class="sol-icon">✦</div>
+        <div class="sol-text"><strong>Middleware-enforced security</strong> — Auth → Tenant → RBAC → Module checks on every single API request.</div>
+      </div>
+      <div class="solution-point">
+        <div class="sol-icon">✦</div>
+        <div class="sol-text"><strong>Freemium pricing</strong> — free for small teams, affordable paid plans. No ₹40,000/month Salesforce trap.</div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Tech Stack -->
+    <div>
+      <div class="section-title">Tech Stack</div>
+      <div class="tech-grid">
+        <div class="tech-item"><span>Frontend</span>React.js + Tailwind CSS</div>
+        <div class="tech-item"><span>Backend</span>Node.js + Express.js</div>
+        <div class="tech-item"><span>Database</span>PostgreSQL (tenant_id scoped)</div>
+        <div class="tech-item"><span>Auth</span>JWT + Refresh Tokens</div>
+        <div class="tech-item"><span>Hosting</span>AWS EC2 + RDS + S3</div>
+        <div class="tech-item"><span>Security</span>Custom RBAC Middleware</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ FOOTER -->
+<div class="footer">
+  <span>MIT School of Computing &nbsp;|&nbsp; Dept. of Information Technology &nbsp;|&nbsp; TY-SMAD</span>
+  <span class="footer-center">Multi-Tenant SaaS Platform &nbsp;·&nbsp; Group LYSMAD05 &nbsp;·&nbsp; 2024–25</span>
+  <span>Guide: Prof. Reetika Kerketta</span>
+</div>
+
+</body>
+</html>
