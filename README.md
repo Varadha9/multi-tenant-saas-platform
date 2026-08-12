@@ -224,7 +224,7 @@ This is the compounding value of a platform over a collection of tools. The more
 
 ### The Vision
 
-The immediate goal is an MVP with four modules serving Indian SMBs. But the platform architecture is designed for something bigger:
+The MVP will focus on tenant management, authentication, RBAC, modular business applications, unified tenant data, and auditing. The architecture will support future extensions such as advanced analytics, event-driven processing, caching, third-party integrations, and a module marketplace.
 
 - Any module can be added to the platform — Finance, Projects, Document Management, Analytics
 - Third-party developers could build and publish modules to a marketplace (like Shopify apps)
@@ -295,7 +295,7 @@ Multi-Tenant SaaS/
 │   ├── DEVELOPMENT_PLAN.md    ← Timeline, milestones, task assignments
 │   └── BUSINESS_MODEL.md      ← Pricing, market fit, competitor analysis
 ├── frontend/                  ← React.js application
-├── backend/                   ← Node.js / Django REST API
+├── backend/                   ← Spring Boot / Java REST API
 └── database/                  ← Migrations and seed data
 ```
 
@@ -306,13 +306,14 @@ Multi-Tenant SaaS/
 | Layer | Technology |
 |---|---|
 | Frontend | React.js, Tailwind CSS, React Router |
-| Backend | Node.js + Express.js |
+| Backend | Spring Boot (Java) |
 | Database | PostgreSQL |
-| Authentication | JWT + Refresh Tokens |
-| Authorization | Custom RBAC middleware |
+| Authentication | Spring Security + JWT + Refresh Tokens |
+| Authorization | Spring Security RBAC |
+| Containerization | Docker |
 | Hosting | AWS EC2 / Railway / Render |
 | Storage | AWS S3 |
-| Email | NodeMailer / SendGrid |
+| Email | JavaMailSender / SendGrid |
 
 > Full reasoning for each choice is in [docs/TECH_STACK.md](docs/TECH_STACK.md)
 
