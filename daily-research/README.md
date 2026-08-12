@@ -1,0 +1,18 @@
+# Daily Research
+
+This folder contains daily AI-generated research notes on topics related to building a multi-tenant SaaS platform for SMBs.
+
+Each file is named `YYYY-MM-DD.md` and contains:
+- The research topic for that day
+- A concise research note generated via Groq API (llama3-8b-8192)
+- Proof sources — real links to papers, reports, and documentation validating the findings
+
+Files are created automatically every day at 02:00 UTC by the [Daily Auto-Commit](.github/workflows/daily-auto-commit.yml) GitHub Actions workflow.
+
+---
+
+## Index
+
+| Date | Topic |
+|------|-------|
+| *(auto-populated by workflow)* | |

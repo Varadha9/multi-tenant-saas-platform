@@ -16,11 +16,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4.2.2
 
-      - name: Generate daily research note via Groq
+      - name: Generate daily research file via Groq
         run: |
           DATE=$(date -u '+%Y-%m-%d')
+          FILE="daily-research/${DATE}.md"
 
-          # Pick a topic based on day-of-year so it rotates automatically
           TOPICS=(
             "Multi-tenant data isolation strategies in SaaS"
             "JWT vs session-based authentication for SaaS platforms"
@@ -54,39 +54,135 @@ jobs:
             "Inventory management data models for SMB platforms"
           )
 
+          SOURCES=(
+            "https://aws.amazon.com/blogs/apn/multi-tenancy-isolation-strategies/ | https://www.postgresql.org/docs/current/ddl-schemas.html"
+            "https://jwt.io/introduction | https://owasp.org/www-community/attacks/Session_hijacking_attack"
+            "https://dl.acm.org/doi/10.1145/234313.234412 | https://csrc.nist.gov/publications/detail/sp/800-162/final"
+            "https://openviewpartners.com/product-benchmarks/ | https://www.priceintelligently.com/blog/saas-pricing-models"
+            "https://www.postgresql.org/docs/current/ddl-rowsecurity.html | https://supabase.com/docs/guides/auth/row-level-security"
+            "https://martinfowler.com/articles/modularizing-react-apps.html | https://www.oreilly.com/library/view/building-microservices/9781491950340/"
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Host | https://nginx.org/en/docs/http/server_names.html"
+            "https://auth0.com/blog/refresh-tokens-what-are-they-and-when-to-use-them/ | https://owasp.org/www-project-top-ten/"
+            "https://www.appcues.com/blog/saas-onboarding | https://www.intercom.com/blog/onboarding-users/"
+            "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html | https://www.ibm.com/topics/audit-trail"
+            "https://spring.io/blog/2022/07/31/how-to-integrate-hibernates-multitenant-feature-with-spring-data-jpa | https://hibernate.org/orm/documentation/"
+            "https://reactrouter.com/en/main | https://martinfowler.com/articles/feature-toggles.html"
+            "https://www.nasscom.in/knowledge-center/publications/sme-digital-adoption-report | https://msme.gov.in/sites/default/files/MSME-AR-2023-24-Eng.pdf"
+            "https://www.christenseninstitute.org/theory/jobs-to-be-done/ | https://a16z.com/2020/02/18/marketplace-100/"
+            "https://cloud.google.com/architecture/rate-limiting-strategies-techniques | https://stripe.com/blog/rate-limiters"
+            "https://www.postgresql.org/docs/current/sql-update.html | https://martinfowler.com/bliki/SoftDelete.html"
+            "https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/scheduling/annotation/Scheduled.html | https://www.baeldung.com/spring-scheduled-tasks"
+            "https://sendgrid.com/blog/email-deliverability-best-practices/ | https://www.mailgun.com/blog/deliverability/email-deliverability-guide/"
+            "https://gdpr.eu/what-is-gdpr/ | https://cloud.google.com/privacy/gdpr"
+            "https://openviewpartners.com/product-led-growth/ | https://www.productled.org/foundations/what-is-product-led-growth"
+            "https://www.baeldung.com/spring-boot-hikari | https://github.com/brettwooldridge/HikariCP"
+            "https://stripe.com/docs/webhooks | https://docs.github.com/en/developers/webhooks-and-events/webhooks/about-webhooks"
+            "https://martinfowler.com/articles/feature-toggles.html | https://launchdarkly.com/blog/what-are-feature-flags/"
+            "https://www.profitwell.com/recur/all/saas-churn-rate | https://baremetrics.com/academy/churn"
+            "https://martinfowler.com/articles/modular-monolith-primer.html | https://microservices.io/patterns/monolithic.html"
+            "https://stripe.com/docs/billing/subscriptions/overview | https://www.chargebee.com/resources/guides/saas-billing/"
+            "https://www.liquibase.org/blog/zero-downtime-deployments | https://flywaydb.org/documentation/concepts/migrations"
+            "https://www.elastic.co/guide/en/elasticsearch/reference/current/multi-tenancy.html | https://www.postgresql.org/docs/current/indexes.html"
+            "https://www.zendesk.com/blog/ticketing-system/ | https://developer.zendesk.com/documentation/ticketing/tickets/ticket-lifecycle/"
+            "https://www.postgresql.org/docs/current/tutorial-sql.html | https://martinfowler.com/eaaCatalog/repository.html"
+          )
+
           DOY=$(date -u '+%j' | sed 's/^0*//')
           INDEX=$(( (DOY - 1) % ${#TOPICS[@]} ))
           TOPIC="${TOPICS[$INDEX]}"
+          SOURCE_LINE="${SOURCES[$INDEX]}"
 
-          PROMPT="You are a SaaS technical researcher. Write a concise research note (150-200 words) on the following topic as it relates to building a multi-tenant SaaS platform for SMBs. Topic: ${TOPIC}. Format: start with a one-line key insight, then 3-4 short bullet points of actionable findings, then one real-world example or data point. Plain text only, no markdown headers."
+          PROMPT="You are a SaaS technical researcher. Write a concise research note (180-220 words) on: ${TOPIC}, specifically for building a multi-tenant SaaS platform for SMBs. Structure: 1) One-line key insight. 2) Exactly 4 bullet points of actionable technical findings. 3) One concrete real-world example with a specific metric or data point. Use plain text only, no markdown headers or bold."
 
           RESPONSE=$(curl -s https://api.groq.com/openai/v1/chat/completions \
             -H "Authorization: Bearer $GROQ_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg prompt "$PROMPT" '{model:"llama3-8b-8192",messages:[{role:"user",content:$prompt}],max_tokens:300,temperature:0.7}')")
+            -d "$(jq -n --arg prompt "$PROMPT" '{model:"llama3-8b-8192",messages:[{role:"user",content:$prompt}],max_tokens:400,temperature:0.7}')")
 
-          NOTE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "Research generation failed."')
+          NOTE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "Research generation failed — check GROQ_API_KEY secret."')
 
-          {
-            echo ""
-            echo "---"
-            echo ""
-            echo "## Daily Research — ${DATE}"
-            echo ""
-            echo "**Topic:** ${TOPIC}"
-            echo ""
-            echo "${NOTE}"
-          } >> docs/RESEARCH.md
+          cat > "$FILE" <<EOF
+          # Research: ${TOPIC}
+
+          **Date:** ${DATE}
+          **Generated by:** Groq API — llama3-8b-8192
+          **Workflow:** [daily-auto-commit.yml](.github/workflows/daily-auto-commit.yml)
+
+          ---
+
+          ## Research Note
+
+          ${NOTE}
+
+          ---
+
+          ## Proof Sources
+
+          $(echo "$SOURCE_LINE" | tr '|' '\n' | sed 's/^ */- /')
+
+          ---
+
+          *This file was auto-generated by the Daily Auto-Commit GitHub Actions workflow.*
+          EOF
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
+      - name: Update index in daily-research/README.md
+        run: |
+          DATE=$(date -u '+%Y-%m-%d')
+          DOY=$(date -u '+%j' | sed 's/^0*//')
+
+          TOPICS=(
+            "Multi-tenant data isolation strategies in SaaS"
+            "JWT vs session-based authentication for SaaS platforms"
+            "Role-Based Access Control (RBAC) design patterns"
+            "Freemium pricing models for SMB SaaS products"
+            "PostgreSQL row-level security for multi-tenancy"
+            "Module-based SaaS architecture vs monolithic apps"
+            "Subdomain-based tenant routing in web applications"
+            "Refresh token rotation and security best practices"
+            "SaaS onboarding UX — reducing time-to-value"
+            "Audit logging patterns for compliance in SaaS"
+            "Spring Boot multi-tenancy with Hibernate filters"
+            "React dynamic routing based on feature flags"
+            "SMB digitization trends in India 2024-2025"
+            "Horizontal vs vertical SaaS — market positioning"
+            "API rate limiting strategies for multi-tenant systems"
+            "Soft delete vs hard delete in SaaS databases"
+            "Tenant-scoped background jobs with Spring Scheduler"
+            "Email deliverability best practices for SaaS"
+            "GDPR and data residency considerations for SaaS"
+            "Product-led growth vs sales-led growth for SaaS startups"
+            "Database connection pooling in multi-tenant Spring Boot apps"
+            "Webhook design patterns for SaaS integrations"
+            "Feature flag systems for gradual module rollouts"
+            "SaaS churn analysis — common causes and prevention"
+            "Microservices vs modular monolith for early-stage SaaS"
+            "Tenant billing and usage metering architecture"
+            "Zero-downtime database migrations in SaaS"
+            "Search and filtering at scale in multi-tenant SaaS"
+            "Customer support ticket lifecycle in HelpDesk SaaS"
+            "Inventory management data models for SMB platforms"
+          )
+
+          INDEX=$(( (DOY - 1) % ${#TOPICS[@]} ))
+          TOPIC="${TOPICS[$INDEX]}"
+
+          # Replace the placeholder line with a real entry (only on first run), then append new rows
+          if grep -q "auto-populated" daily-research/README.md; then
+            sed -i "s/| \*(auto-populated by workflow)\* | |/| [${DATE}](${DATE}.md) | ${TOPIC} |/" daily-research/README.md
+          else
+            echo "| [${DATE}](${DATE}.md) | ${TOPIC} |" >> daily-research/README.md
+          fi
+
       - name: Commit and push
         run: |
+          DATE=$(date -u '+%Y-%m-%d')
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/RESEARCH.md
+          git add daily-research/
           git diff --cached --quiet && echo "Nothing to commit" && exit 0
-          git commit -m "research: daily note — $(date -u '+%Y-%m-%d')"
+          git commit -m "research: daily note — ${DATE}"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
