@@ -16,17 +16,77 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4.2.2
 
-      - name: Write daily timestamp
+      - name: Generate daily research note via Groq
         run: |
-          echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> .github/daily-activity/activity.log
+          DATE=$(date -u '+%Y-%m-%d')
+
+          # Pick a topic based on day-of-year so it rotates automatically
+          TOPICS=(
+            "Multi-tenant data isolation strategies in SaaS"
+            "JWT vs session-based authentication for SaaS platforms"
+            "Role-Based Access Control (RBAC) design patterns"
+            "Freemium pricing models for SMB SaaS products"
+            "PostgreSQL row-level security for multi-tenancy"
+            "Module-based SaaS architecture vs monolithic apps"
+            "Subdomain-based tenant routing in web applications"
+            "Refresh token rotation and security best practices"
+            "SaaS onboarding UX — reducing time-to-value"
+            "Audit logging patterns for compliance in SaaS"
+            "Spring Boot multi-tenancy with Hibernate filters"
+            "React dynamic routing based on feature flags"
+            "SMB digitization trends in India 2024-2025"
+            "Horizontal vs vertical SaaS — market positioning"
+            "API rate limiting strategies for multi-tenant systems"
+            "Soft delete vs hard delete in SaaS databases"
+            "Tenant-scoped background jobs with Spring Scheduler"
+            "Email deliverability best practices for SaaS"
+            "GDPR and data residency considerations for SaaS"
+            "Product-led growth vs sales-led growth for SaaS startups"
+            "Database connection pooling in multi-tenant Spring Boot apps"
+            "Webhook design patterns for SaaS integrations"
+            "Feature flag systems for gradual module rollouts"
+            "SaaS churn analysis — common causes and prevention"
+            "Microservices vs modular monolith for early-stage SaaS"
+            "Tenant billing and usage metering architecture"
+            "Zero-downtime database migrations in SaaS"
+            "Search and filtering at scale in multi-tenant SaaS"
+            "Customer support ticket lifecycle in HelpDesk SaaS"
+            "Inventory management data models for SMB platforms"
+          )
+
+          DOY=$(date -u '+%j' | sed 's/^0*//')
+          INDEX=$(( (DOY - 1) % ${#TOPICS[@]} ))
+          TOPIC="${TOPICS[$INDEX]}"
+
+          PROMPT="You are a SaaS technical researcher. Write a concise research note (150-200 words) on the following topic as it relates to building a multi-tenant SaaS platform for SMBs. Topic: ${TOPIC}. Format: start with a one-line key insight, then 3-4 short bullet points of actionable findings, then one real-world example or data point. Plain text only, no markdown headers."
+
+          RESPONSE=$(curl -s https://api.groq.com/openai/v1/chat/completions \
+            -H "Authorization: Bearer $GROQ_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg prompt "$PROMPT" '{model:"llama3-8b-8192",messages:[{role:"user",content:$prompt}],max_tokens:300,temperature:0.7}')")
+
+          NOTE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "Research generation failed."')
+
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "## Daily Research — ${DATE}"
+            echo ""
+            echo "**Topic:** ${TOPIC}"
+            echo ""
+            echo "${NOTE}"
+          } >> docs/RESEARCH.md
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
       - name: Commit and push
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .github/daily-activity/activity.log
+          git add docs/RESEARCH.md
           git diff --cached --quiet && echo "Nothing to commit" && exit 0
-          git commit -m "chore: daily activity update"
+          git commit -m "research: daily note — $(date -u '+%Y-%m-%d')"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
