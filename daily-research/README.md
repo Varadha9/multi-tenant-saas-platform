@@ -15,4 +15,4 @@ Files are created automatically every day at 02:00 UTC by the [Daily Auto-Commit
 
 | Date | Topic |
 |------|-------|
-| *(auto-populated by workflow)* | |
+| [2026-08-13](2026-08-13.md) | API rate limiting strategies for multi-tenant systems |
