@@ -16,3 +16,4 @@ Files are created automatically every day at 02:00 UTC by the [Daily Auto-Commit
 | Date | Topic |
 |------|-------|
 | [2026-08-13](2026-08-13.md) | API rate limiting strategies for multi-tenant systems |
+| [2026-08-14](2026-08-14.md) | Soft delete vs hard delete in SaaS databases |
