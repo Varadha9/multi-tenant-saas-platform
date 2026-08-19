@@ -20,3 +20,4 @@ Files are created automatically every day at 02:00 UTC by the [Daily Auto-Commit
 | [2026-08-15](2026-08-15.md) | Tenant-scoped background jobs with Spring Scheduler |
 | [2026-08-16](2026-08-16.md) | Email deliverability best practices for SaaS |
 | [2026-08-17](2026-08-17.md) | GDPR and data residency considerations for SaaS |
+| [2026-08-19](2026-08-19.md) | Database connection pooling in multi-tenant Spring Boot apps |
