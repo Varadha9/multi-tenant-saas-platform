@@ -188,6 +188,7 @@ jobs:
           git add daily-research/
           git diff --cached --quiet && echo "Nothing to commit" && exit 0
           git commit -m "research: daily note — ${DATE}"
+          git pull --rebase origin main
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
