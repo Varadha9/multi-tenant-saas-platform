@@ -21,6 +21,11 @@ jobs:
           DATE=$(date -u '+%Y-%m-%d')
           FILE="daily-research/${DATE}.md"
 
+          if [ -f "$FILE" ]; then
+            echo "Today's file already exists — skipping."
+            exit 0
+          fi
+
           TOPICS=(
             "Multi-tenant data isolation strategies in SaaS"
             "JWT vs session-based authentication for SaaS platforms"
@@ -185,10 +190,10 @@ jobs:
           DATE=$(date -u '+%Y-%m-%d')
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
           git add daily-research/
           git diff --cached --quiet && echo "Nothing to commit" && exit 0
           git commit -m "research: daily note — ${DATE}"
-          git pull --rebase origin main
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
