@@ -133,10 +133,20 @@ jobs:
           } > "$FILE"
 
           # Update README index
-          if grep -q "auto-populated" daily-research/README.md; then
-            sed -i "s~| \*(auto-populated by workflow)\* | |~| [${DATE}](${DATE}.md) | ${TOPIC} |~" daily-research/README.md
-          else
-            echo "| [${DATE}](${DATE}.md) | ${TOPIC} |" >> daily-research/README.md
+          if ! grep -q "${DATE}" daily-research/README.md; then
+            python3 -c "
+import re, sys
+content = open('daily-research/README.md').read()
+new_row = '| [${DATE}](${DATE}.md) | ${TOPIC} |'
+# Find last table row and insert after it
+lines = content.splitlines()
+last_table = max((i for i, l in enumerate(lines) if l.startswith('|')), default=None)
+if last_table is not None:
+    lines.insert(last_table + 1, new_row)
+else:
+    lines.append(new_row)
+open('daily-research/README.md', 'w').write('\n'.join(lines) + '\n')
+"
           fi
 
           git config user.name  "Varadha9"
