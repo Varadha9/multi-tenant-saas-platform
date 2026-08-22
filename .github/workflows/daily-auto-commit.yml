@@ -119,12 +119,12 @@ jobs:
           # Try models in order of preference — first one that exists wins
           MODEL=""
           for CANDIDATE in \
+            "qwen/qwen3.6-27b" \
+            "openai/gpt-oss-120b" \
+            "openai/gpt-oss-20b" \
             "llama-3.3-70b-versatile" \
             "llama-3.1-70b-versatile" \
-            "llama3-70b-8192" \
-            "mixtral-8x7b-32768" \
-            "gemma2-9b-it" \
-            "gemma-7b-it"; do
+            "gemma2-9b-it"; do
             EXISTS=$(echo "$MODELS_RESPONSE" | jq -r --arg m "$CANDIDATE" '.data[] | select(.id == $m) | .id' 2>/dev/null)
             if [ -n "$EXISTS" ]; then
               MODEL="$CANDIDATE"
@@ -133,8 +133,8 @@ jobs:
           done
 
           if [ -z "$MODEL" ]; then
-            # Last resort: just pick the first model returned
-            MODEL=$(echo "$MODELS_RESPONSE" | jq -r '.data[0].id' 2>/dev/null)
+            # Last resort: pick first model that is NOT a guard/whisper/prompt-guard
+            MODEL=$(echo "$MODELS_RESPONSE" | jq -r '[.data[].id | select(test("guard|whisper|orpheus|safeguard") | not)] | first' 2>/dev/null)
           fi
 
           echo "Using model: $MODEL"
@@ -143,6 +143,11 @@ jobs:
             echo "ERROR: Could not resolve any model. Check DAILY_RESEARCH secret."
             exit 1
           fi
+
+          # ── Pull latest before writing file to avoid rebase conflict ─────────
+          git config user.name  "Varadha9"
+          git config user.email "varadmandhare924@gmail.com"
+          git pull --rebase origin main
 
           # ── Call Groq API ─────────────────────────────────────────────────────
           PROMPT="You are a SaaS technical researcher. Write a concise research note (180-220 words) on: ${TOPIC}, specifically for building a multi-tenant SaaS platform for SMBs. Structure: 1) One-line key insight. 2) Exactly 4 bullet points of actionable technical findings. 3) One concrete real-world example with a specific metric or data point. Use plain text only, no markdown headers or bold."
@@ -183,9 +188,6 @@ jobs:
           } > daily-research/README.md
 
           # ── Commit and push ───────────────────────────────────────────────────
-          git config user.name  "Varadha9"
-          git config user.email "varadmandhare924@gmail.com"
-          git pull --rebase origin main
           git add daily-research/
           git diff --cached --quiet && echo "Nothing to commit." && exit 0
           git commit -m "research: daily note — ${DATE}"
