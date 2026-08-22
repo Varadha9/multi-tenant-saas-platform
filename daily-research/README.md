@@ -20,6 +20,7 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-08-15](2026-08-15.md) | Tenant-Scoped Background Jobs with Spring Scheduler |
 | [2026-08-16](2026-08-16.md) | Email Deliverability Best Practices for SaaS |
 | [2026-08-17](2026-08-17.md) | GDPR and Data Residency Considerations for SaaS |
+| [2026-08-18](2026-08-18.md) | Product-led growth vs sales-led growth for SaaS startups |
 | [2026-08-19](2026-08-19.md) | Database Connection Pooling in Multi-Tenant Spring Boot Apps |
 | [2026-08-20](2026-08-20.md) | Webhook Design Patterns for SaaS Integrations |
 | [2026-08-21](2026-08-21.md) | Feature flag systems for gradual module rollouts |
