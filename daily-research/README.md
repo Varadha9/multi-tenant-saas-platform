@@ -25,3 +25,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-08-20](2026-08-20.md) | Webhook Design Patterns for SaaS Integrations |
 | [2026-08-21](2026-08-21.md) | Feature flag systems for gradual module rollouts |
 | [2026-08-22](2026-08-22.md) | SaaS churn analysis — common causes and prevention |
+| [2026-08-23](2026-08-23.md) | Microservices vs modular monolith for early-stage SaaS |
