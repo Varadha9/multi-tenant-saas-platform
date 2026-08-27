@@ -29,3 +29,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-08-24](2026-08-24.md) | Tenant billing and usage metering architecture |
 | [2026-08-25](2026-08-25.md) | Zero-downtime database migrations in SaaS |
 | [2026-08-26](2026-08-26.md) | Search and filtering at scale in multi-tenant SaaS |
+| [2026-08-27](2026-08-27.md) | Customer support ticket lifecycle in HelpDesk SaaS |
