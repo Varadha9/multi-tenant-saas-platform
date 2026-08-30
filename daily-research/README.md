@@ -32,3 +32,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-08-27](2026-08-27.md) | Customer support ticket lifecycle in HelpDesk SaaS |
 | [2026-08-28](2026-08-28.md) | Inventory management data models for SMB platforms |
 | [2026-08-29](2026-08-29.md) | Multi-tenant data isolation strategies in SaaS |
+| [2026-08-30](2026-08-30.md) | JWT vs session-based authentication for SaaS platforms |
