@@ -36,3 +36,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-08-31](2026-08-31.md) | Role-Based Access Control (RBAC) design patterns |
 | [2026-09-01](2026-09-01.md) | Freemium pricing models for SMB SaaS products |
 | [2026-09-02](2026-09-02.md) | PostgreSQL row-level security for multi-tenancy |
+| [2026-09-03](2026-09-03.md) | Module-based SaaS architecture vs monolithic apps |
