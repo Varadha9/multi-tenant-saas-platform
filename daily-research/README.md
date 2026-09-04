@@ -37,3 +37,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-09-01](2026-09-01.md) | Freemium pricing models for SMB SaaS products |
 | [2026-09-02](2026-09-02.md) | PostgreSQL row-level security for multi-tenancy |
 | [2026-09-03](2026-09-03.md) | Module-based SaaS architecture vs monolithic apps |
+| [2026-09-04](2026-09-04.md) | Subdomain-based tenant routing in web applications |
