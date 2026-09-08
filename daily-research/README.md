@@ -41,3 +41,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-09-05](2026-09-05.md) | Refresh token rotation and security best practices |
 | [2026-09-06](2026-09-06.md) | SaaS onboarding UX — reducing time-to-value |
 | [2026-09-07](2026-09-07.md) | Audit logging patterns for compliance in SaaS |
+| [2026-09-08](2026-09-08.md) | Spring Boot multi-tenancy with Hibernate filters |
