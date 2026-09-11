@@ -43,3 +43,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-09-07](2026-09-07.md) | Audit logging patterns for compliance in SaaS |
 | [2026-09-08](2026-09-08.md) | Spring Boot multi-tenancy with Hibernate filters |
 | [2026-09-09](2026-09-09.md) | React dynamic routing based on feature flags |
+| [2026-09-11](2026-09-11.md) | Horizontal vs vertical SaaS — market positioning |
