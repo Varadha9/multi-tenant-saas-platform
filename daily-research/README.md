@@ -45,3 +45,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-09-09](2026-09-09.md) | React dynamic routing based on feature flags |
 | [2026-09-11](2026-09-11.md) | Horizontal vs vertical SaaS — market positioning |
 | [2026-09-12](2026-09-12.md) | API rate limiting strategies for multi-tenant systems |
+| [2026-09-13](2026-09-13.md) | Soft delete vs hard delete in SaaS databases |
