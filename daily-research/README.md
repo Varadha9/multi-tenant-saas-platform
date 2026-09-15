@@ -47,3 +47,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-09-12](2026-09-12.md) | API rate limiting strategies for multi-tenant systems |
 | [2026-09-13](2026-09-13.md) | Soft delete vs hard delete in SaaS databases |
 | [2026-09-14](2026-09-14.md) | Tenant-scoped background jobs with Spring Scheduler |
+| [2026-09-15](2026-09-15.md) | Email deliverability best practices for SaaS |
