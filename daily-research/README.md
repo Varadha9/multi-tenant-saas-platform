@@ -51,3 +51,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-09-16](2026-09-16.md) | GDPR and data residency considerations for SaaS |
 | [2026-09-17](2026-09-17.md) | Product-led growth vs sales-led growth for SaaS startups |
 | [2026-09-18](2026-09-18.md) | Database connection pooling in multi-tenant Spring Boot apps |
+| [2026-09-19](2026-09-19.md) | Webhook design patterns for SaaS integrations |
