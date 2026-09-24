@@ -56,3 +56,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-09-21](2026-09-21.md) | SaaS churn analysis — common causes and prevention |
 | [2026-09-22](2026-09-22.md) | Microservices vs modular monolith for early-stage SaaS |
 | [2026-09-23](2026-09-23.md) | Tenant billing and usage metering architecture |
+| [2026-09-24](2026-09-24.md) | Zero-downtime database migrations in SaaS |
