@@ -60,3 +60,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-09-25](2026-09-25.md) | Search and filtering at scale in multi-tenant SaaS |
 | [2026-09-26](2026-09-26.md) | Customer support ticket lifecycle in HelpDesk SaaS |
 | [2026-09-27](2026-09-27.md) | Inventory management data models for SMB platforms |
+| [2026-09-28](2026-09-28.md) | Multi-tenant data isolation strategies in SaaS |
