@@ -63,3 +63,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-09-28](2026-09-28.md) | Multi-tenant data isolation strategies in SaaS |
 | [2026-09-29](2026-09-29.md) | JWT vs session-based authentication for SaaS platforms |
 | [2026-09-30](2026-09-30.md) | Role-Based Access Control (RBAC) design patterns |
+| [2026-10-01](2026-10-01.md) | Freemium pricing models for SMB SaaS products |
