@@ -67,3 +67,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-10-02](2026-10-02.md) | PostgreSQL row-level security for multi-tenancy |
 | [2026-10-03](2026-10-03.md) | Module-based SaaS architecture vs monolithic apps |
 | [2026-10-04](2026-10-04.md) | Subdomain-based tenant routing in web applications |
+| [2026-10-05](2026-10-05.md) | Refresh token rotation and security best practices |
