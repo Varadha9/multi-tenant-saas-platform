@@ -69,3 +69,4 @@ Files are created automatically every day at 03:30 UTC by the [Daily Auto-Commit
 | [2026-10-04](2026-10-04.md) | Subdomain-based tenant routing in web applications |
 | [2026-10-05](2026-10-05.md) | Refresh token rotation and security best practices |
 | [2026-10-06](2026-10-06.md) | SaaS onboarding UX — reducing time-to-value |
+| [2026-10-07](2026-10-07.md) | Audit logging patterns for compliance in SaaS |
