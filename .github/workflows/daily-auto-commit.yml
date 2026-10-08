@@ -1,8 +1,8 @@
 name: Daily Research
 
 on:
-  schedule:
-    - cron: "30 3 * * *"
+  # schedule:
+  #   - cron: "30 3 * * *" # DISABLED: daily automated research commit stopped
   workflow_dispatch:
     inputs:
       date_override:
