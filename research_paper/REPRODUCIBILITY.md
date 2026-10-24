@@ -87,8 +87,10 @@ chmod +x verify_policy_guard.sh
 ```
 
 ### Option B: Integration Test Suite (Full CI Environment)
+*(Requires the full application platform source: `git clone https://github.com/Varadha9/nexusops.git`)*
 ```bash
-cd ../backend
+git clone https://github.com/Varadha9/nexusops.git
+cd nexusops/backend
 ./gradlew test --tests com.nexusops.RlsCoverageIT
 ```
 **Assertion Criteria:** All 4 tests pass (`expectedTenantTablesExist`, `everyDirectTenantTableForcesRlsAndMatchesCanonicalTenantExpression`, `allTablesEnforceRlsUnlessExplicitlyGlobal`, `policyGuardRejectsDeliberatelyUnsafeConfigurations`).
