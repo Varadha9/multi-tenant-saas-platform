@@ -80,7 +80,7 @@ Shared-schema multi-tenancy minimizes infrastructure costs for Software-as-a-Ser
 
 This paper presents the formal architecture, threat model, and empirical evaluation of NexusOps, a modular enterprise operations platform engineered with Spring Boot on PostgreSQL that enforces multi-tenant isolation through defense-in-depth. Rather than asserting novelty in application filters or database row security individually, our contribution provides: (1) an end-to-end integration and connection lifecycle protocol that ensures robust transaction-scoped tenant binding across recycled connection pools; (2) an automated verification framework combining AST expression catalog guards and startup role guards that prevents policy drift; (3) an empirical security evaluation framework utilizing canary tokens, positive controls, and a 16-mutant fault-injection matrix; and (4) a statistically powered equivalence evaluation measuring runtime overhead across distinct workloads.
 
-Empirical security evaluation demonstrates zero cross-tenant leakage across 1,000,000 requests over 100 concurrent workers with 940,000 tenant context transitions over a 32-connection pool (Hanley--Jadack Rule-of-Three 95\% upper bound $p < 3 \times 10^{-6}$ for the evaluated harness). Microbenchmarks across 1,000,000 tuples on PostgreSQL 17 ($n = 30$ paired runs) demonstrate that dual-layer isolation incurs bounded runtime overhead $\le \sim 2\%$ (95\% CI), with Two One-Sided Tests (TOST) on log-ratios confirming statistical equivalence within a $\pm 5\%$ margin ($p_{\text{TOST}} < 10^{-8}$) across point lookups, paged traversals, aggregate counts, and writes under the evaluated single-table configuration.
+Empirical security evaluation demonstrates zero cross-tenant leakage across 1,000,000 requests over 100 concurrent workers with 940,000 tenant context transitions over a 32-connection pool (Hanley--Lippman-Hand Rule-of-Three 95\% upper bound $p < 3 \times 10^{-6}$ for the evaluated harness). Microbenchmarks across 1,000,000 tuples on PostgreSQL 17 ($n = 30$ paired runs) demonstrate that dual-layer isolation incurs bounded runtime overhead $\le \sim 2\%$ (95\% CI), with Two One-Sided Tests (TOST) on log-ratios confirming statistical equivalence within a $\pm 5\%$ margin ($p_{\text{TOST}} < 10^{-8}$) across point lookups, paged traversals, aggregate counts, writes, multi-table joins, and Pareto-skewed tenant distributions.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -169,11 +169,11 @@ Consequently, database-level isolation is effective only if the application conn
 Tenant isolation must be distinguished from authorization. Tenant isolation determines \textit{which tenant's boundary} a request may access; authorization determines \textit{what permissions} an authenticated user holds within their assigned workspace \cite{sandhu1996, ferraiolo2001}. NexusOps enforces fine-grained permission codes independently of tenant data isolation. Even if an authorization defect grants administrative privileges to an unprivileged user, tenant isolation ensures that data mutations remain strictly confined within that user's tenant organization.
 
 \subsection{Identified Research Gap}
-While database-level RLS and ORM frameworks are individually documented, to our knowledge, prior literature lacks an integrated evaluation framework that measures which classes of application and configuration faults are prevented by ORM filtering, forced RLS, and automated policy verification behind pooled connections, or quantifies the performance trade-offs under statistically powered equivalence testing.
+While database-level RLS and ORM frameworks are individually documented, prior empirical literature \cite{aulbach2008, bezemer2010, kabbedijk2015, schiller2011, narasayya2022} lacks an integrated evaluation framework that measures which classes of application and configuration faults are prevented by ORM filtering, forced RLS, and automated policy verification behind pooled connections, or quantifies the performance trade-offs under statistically powered equivalence testing.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.56\columnwidth]{figures/fig1_architecture.png}
+\includegraphics[width=0.51\columnwidth]{figures/fig1_architecture.png}
 \caption{Deployment and modular architecture of NexusOps. Functional domain modules interact with PostgreSQL through the shared \texttt{TenantAwareDataSource}.}
 \label{fig:arch}
 \end{figure}
@@ -233,7 +233,7 @@ Platform administrative operations (e.g., cross-tenant support or account suspen
 \forall a \in \mathcal{D}_{\text{audit}}(\sigma): \quad \text{val}_{\sigma'}(a) = \text{val}_{\sigma}(a)
 \end{equation}
 
-\textbf{Property 5 (Anti-Enumeration Response Uniformity):} Any query attempting to access a record $r \in \mathcal{D}(t_j)$ by a user from $t_i$ ($i \neq j$) must return an HTTP 404 (Not Found) rather than HTTP 403 (Forbidden), ensuring that $\mathcal{A}$ cannot infer the existence of alien identifiers through status-code side channels.
+\textbf{Property 5 (Anti-Enumeration Response Uniformity):} Any query attempting to access a record $r \in \mathcal{D}(t_j)$ by a user from $t_i$ ($i \neq j$) must return an HTTP 404 (Not Found) rather than HTTP 403 (Forbidden), ensuring that $\mathcal{A}$ cannot infer the existence of alien identifiers through HTTP status-code differentiation (narrowing status-code side channels; sub-millisecond execution and network timing variations remain outside this claim).
 
 Table \ref{tab:property_mapping} maps each formal property to its corresponding empirical verification suite.
 
@@ -294,7 +294,7 @@ Hibernate's native multi-tenancy discriminator hooks directly into the query com
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.56\columnwidth]{figures/fig2_request_trace.png}
+\includegraphics[width=0.51\columnwidth]{figures/fig2_request_trace.png}
 \caption{Path of an authenticated request. The tenant context is extracted strictly from the verified JWT and enforced independently by Hibernate and PostgreSQL.}
 \label{fig:request_flow}
 \end{figure}
@@ -345,21 +345,20 @@ A security policy is effective only as long as it remains consistently applied a
 \subsection{Build-Time Catalog Coverage and Expression Guard}
 The integration suite \texttt{RlsCoverageIT} queries PostgreSQL system catalogs (\texttt{pg\_class}, \texttt{pg\_namespace}, \texttt{pg\_policy}, and \texttt{pg\_views}) during continuous integration builds:
 \begin{lstlisting}[language=SQL]
-SELECT c.relname, p.polname, 
-       pg_get_expr(p.polqual, p.polrelid) AS using_expr,
-       pg_get_expr(p.polwithcheck, p.polrelid) AS check_expr
+SELECT c.relname, p.polname
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 LEFT JOIN pg_policy p ON p.polrelid = c.oid
 WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
   AND c.relname NOT IN ('permissions', 'subscription_plans')
   AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity 
        OR p.polname IS NULL OR p.polcmd != '*'
-       OR pg_get_expr(p.polqual, p.polrelid) != 
-          '(tenant_id = (NULLIF(current_setting(''app.tenant_id''::text, true), ''''::text))::uuid)'
-       OR pg_get_expr(p.polwithcheck, p.polrelid) IS NULL
+       OR pg_get_expr(p.polqual, p.polrelid) 
+          IS DISTINCT FROM :canonicalExpr
+       OR pg_get_expr(p.polwithcheck, p.polrelid) 
+          IS DISTINCT FROM :canonicalExpr
        OR (SELECT count(*) FROM pg_policy WHERE polrelid = c.oid) != 1);
 \end{lstlisting}
-This query provides a three-tier guarantee: (1) RLS is enabled and forced; (2) the policy decompiles via \texttt{pg\_get\_expr} to the exact canonical tenant predicate, strictly rejecting permissive bypasses like \texttt{USING (true)}; and (3) exactly one policy exists per tenant table, preventing accidental permissive additions. Views are asserted to have \texttt{security\_invoker = true}. Any non-compliant table causes immediate CI failure.
+where \texttt{:canonicalExpr} denotes the canonical AST expression \texttt{'(tenant\_id = (NULLIF(current\_setting} \texttt{(''app.tenant\_id''::text, true), ''''::text))::uuid)'}. The \texttt{IS DISTINCT FROM} operator ensures that missing (\texttt{NULL}) or mutated write expressions (such as \texttt{WITH CHECK (true)}) evaluate to true, flagging the violation. This query provides a three-tier guarantee: (1) RLS is enabled and forced; (2) the policy decompiles via \texttt{pg\_get\_expr} to the exact canonical tenant predicate, strictly rejecting permissive bypasses; and (3) exactly one policy exists per tenant table, preventing accidental permissive additions. Views are asserted to have \texttt{security\_invoker = true}. Any non-compliant table causes immediate CI failure.
 
 \textbf{Deliberate Negative Policy Mutation Testing:}
 To ensure the catalog query itself does not suffer from false negatives, the integration suite incorporates negative mutation tests against an ephemeral probe table across six deliberately unsafe schema configurations: (1) table without RLS enabled; (2) table with RLS enabled but not forced; (3) table with \texttt{WITH CHECK (true)} permissive insertion bypass; (4) table with \texttt{USING (true)} permissive read bypass; (5) table omitting the \texttt{WITH CHECK} clause; and (6) table with a secondary permissive policy injected alongside the tenant policy. In automated testing via \texttt{RlsCoverageIT} and the self-contained reproduction script \texttt{verify\_policy\_guard.sh}, the catalog guard achieved a 100\% detection rate (6/6 vulnerabilities blocked), confirming that permissive expressions cannot evade detection.
@@ -453,11 +452,11 @@ We executed a multi-tenant concurrency benchmark issuing 1,000,000 randomized cr
     \item \textit{Control 3 (Seeded Leak):} Both Layer 1 and Layer 2 were deliberately bypassed on a test diagnostic endpoint. The test harness detected 100\% of cross-tenant probe attempts within 12 ms, confirming the harness sensitivity.
 \end{enumerate}
 
-\textbf{Statistical Bound (Rule-of-Three):} With zero cross-tenant leaks observed across $N = 1,000,000$ transactions ($0 / 10^6$), the Hanley--Jadack Rule-of-Three \cite{hanley1983} establishes a 95\% upper confidence bound on the cross-tenant leakage probability of:
+\textbf{Statistical Bound (Rule-of-Three):} With zero cross-tenant leaks observed across $N = 1,000,000$ independent tenant transactions ($0 / 10^6$) executed across 50 concurrent virtual threads over a 32-connection pool with interleaved canary probes, the Hanley--Lippman-Hand Rule-of-Three \cite{hanley1983} establishes a 95\% upper confidence bound on the cross-tenant leakage probability of:
 \begin{equation}
 p_{95\%} < \frac{3}{N} = \frac{3}{10^6} = 3 \times 10^{-6} \quad (0.0003\%)
 \end{equation}
-We emphasize that this bound applies to the evaluated workloads, connection pool configuration, and fault conditions exercised by the test harness, and does not constitute a universal mathematical guarantee for arbitrary untested production endpoints.
+We emphasize that this bound represents a measured empirical upper bound under the evaluated concurrency harness, rather than an unconstrained universal guarantee across untested query pathways or compromised database operating systems.
 
 \section{Experimental Performance Evaluation}
 \label{sec:evaluation}
@@ -508,7 +507,7 @@ Point insert & $11,240 \pm 260$ & $11,115 \pm 275$ & $11,065 \pm 295$ & $0.984$ 
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.56\columnwidth]{figures/fig3_benchmark_ratio.pdf}
+\includegraphics[width=0.51\columnwidth]{figures/fig3_benchmark_ratio.pdf}
 \caption{Distribution of paired throughput ratios (Dual-Layer RLS / Filter-Only Baseline) across $n = 30$ paired repetitions for all four workloads. Shaded region delineates the $\pm 5\%$ equivalence corridor $[\theta_L=0.95, \theta_U=1.05]$. Diamond markers and error bars depict sample means and 95\% confidence intervals.}
 \label{fig:ratio}
 \end{figure}
@@ -557,10 +556,10 @@ Enterprise multi-tenant systems depart from uniform single-table patterns in thr
 In multi-table queries, PostgreSQL applies row security policies independently to each joined relation. When joined tables maintain composite foreign keys prefixed with \texttt{(tenant\_id, parent\_id)}, the query planner pushes the stable tenant predicate into each index scan branch. In our two-table and three-table joins, the executor selected Nested Loop Inner Index Scans, avoiding intermediate cross-tenant hash spills or post-join filtering. The Dual/Base throughput ratio remained at $0.988$ and $0.987$, confirming that RLS overhead does not compound across join depth when foreign keys are composite-indexed.
 
 \textbf{Tenant Skew and Generic Plan Caching:}
-Production workloads follow heavy-tailed Zipfian/Pareto distributions. We evaluated an 80/20 distribution across 100 tenants where the largest ``whale'' tenant holds 250,000 tuples (25\%) while small tenants hold 500 tuples (0.05\%). B-tree index lookup complexity is $\mathcal{O}(\log N + k)$ where $k$ is the matching row count. Because \texttt{tenant\_id} is the leading composite index attribute, B-tree depth remains fixed at 3 levels across all tenant sizes, yielding $>99.8\%$ shared buffer hit rates and statistically equivalent throughput ($p_{\text{TOST}} < 10^{-9}$). Furthermore, when PostgreSQL switches from custom plans to generic cached plans (after 5 executions), the executor evaluates \texttt{current\_setting()} at scan startup, guaranteeing index probes rather than sequential scans.
+Production workloads follow heavy-tailed Zipfian/Pareto distributions. We evaluated an 80/20 distribution across 100 tenants where the largest ``whale'' tenant holds 250,000 tuples (25\%) while small tenants hold 500 tuples (0.05\%). B-tree index lookup complexity is $\mathcal{O}(\log N + k)$ where $k$ is the matching row count. Because \texttt{tenant\_id} is the leading composite index attribute, B-tree depth remains fixed at 3 levels across all tenant sizes, yielding $>99.8\%$ shared buffer hit rates and statistically equivalent throughput ($p_{\text{TOST}} < 10^{-9}$). Furthermore, when PostgreSQL switches from custom plans to generic cached plans (after 5 executions), the executor evaluates \texttt{current\_setting()} at scan startup, and the evaluated query plans executed index scans under the reported configuration.
 
 \textbf{Connection Pool Saturation and Queue Latency:}
-To evaluate isolation overhead under extreme database contention, we scaled client concurrency from 8 to 128 clients against a fixed HikariCP pool of 32 connections. At 128 clients (4$\times$ oversubscription), connection wait time rose to $14.2$ ms (82\% of transaction time), while database-tier RLS rewrite overhead remained strictly bounded at $0.038$ ms. In real-world enterprise deployments, connection pool queuing dwarfs RLS overhead by over $350\times$, rendering dual-layer isolation invisible at scale. In an end-to-end HTTP pipeline (Spring Boot, HikariCP, network round-trip), total transaction latency was dominated by framework serialization (p50 = 2.4 ms, p99 = 6.8 ms).
+To evaluate isolation overhead under extreme database contention, we scaled client concurrency from 8 to 128 clients against a fixed HikariCP pool of 32 connections. At 128 clients (4$\times$ oversubscription), connection wait time rose to $14.2$ ms (82\% of transaction time), while database-tier RLS rewrite overhead remained strictly bounded at $0.038$ ms. In real-world enterprise deployments, connection pool queuing dwarfs RLS overhead by over $350\times$, indicating that pool contention and network transit dominate latency in high-concurrency cloud environments. In an end-to-end HTTP pipeline (Spring Boot, HikariCP, network round-trip), total transaction latency was dominated by framework serialization (p50 = 2.4 ms, p99 = 6.8 ms).
 
 \subsection{Query Execution Plan Analysis}
 To understand why forced RLS incurs bounded overhead, we inspected query plans using \texttt{EXPLAIN (ANALYZE, BUFFERS, VERBOSE)}. For the tenant count workload, both variants generated identical execution plans: an \textit{Index-Only Scan} over the composite index \texttt{(tenant\_id, name)}, reading exactly 64 shared buffer pages. In PostgreSQL, \texttt{current\_setting()} is defined as a \texttt{STABLE} function. Stable functions are evaluated once at executor scan startup rather than per-row. In prepared-statement mode (\texttt{plan\_cache\_mode = auto}), the executor evaluates the session variable at scan initialization and performs a direct index probe on the leading index key \texttt{tenant\_id}.
@@ -572,7 +571,7 @@ To understand why forced RLS incurs bounded overhead, we inspected query plans u
 
 \textbf{External Validity:} Our empirical evaluation directly validated multi-table joins up to three relations and heavy-tailed Pareto distributions (Table \ref{tab:complex_benchmarks}). While arbitrary recursive graph queries or un-indexed joins may exhibit planner variance, enterprise schemas adhering to composite index conventions preserve index scan efficiency across relational structures.
 
-\textbf{Construct Validity and SQL Injection:} As formalized in Section \ref{sec:threat_model}, RLS enforces isolation against application-tier logic errors and unmapped queries. It does not replace input validation against arbitrary SQL command execution.
+\textbf{Construct Validity and Attacker Capabilities:} As formalized in Section \ref{sec:threat_model}, dual-layer isolation differentiates separate attacker capabilities: (1) application developer omissions and unmapped queries are intercepted at the database kernel by forced RLS; (2) cross-tenant IDOR attacks are blocked at both Layer 1 and Layer 2; (3) connection-pool session bleeding is eliminated via transaction-lifecycle hooks. However, if an adversary achieves arbitrary SQL execution as the application role, they operate with that database role's permissions. While the application role strictly lacks \texttt{BYPASSRLS}, \texttt{rolsuper}, and DDL permissions, and transaction-local scoping prevents cross-session bleeding, runtime SQL injection remains an application-layer threat requiring input sanitization and parameterized query compilation rather than being solved by RLS alone.
 
 \textbf{Policy Complexity and Leakproof Functions:} Our findings apply to direct equality policies on indexed columns. Policies invoking complex user-defined sub-queries or non-leakproof functions may inhibit index pushdown and should be avoided in performance-critical tenant paths.
 
@@ -590,24 +589,12 @@ Future work will evaluate distributed sharding with forced RLS and investigate c
 \section{Conclusion}
 This paper presented the dual-layer tenant isolation architecture of NexusOps. By pairing Hibernate ORM tenant discriminators with PostgreSQL forced Row-Level Security, multi-tenant SaaS applications achieve resilient defense-in-depth against data leakage. Through transaction-scoped connection sanitization, build-time catalog verification, and eager role guards, the architecture mitigates connection bleed and configuration drift. Empirical evaluation across 1,000,000 records ($n = 30$ paired runs) with TOST equivalence testing confirms that forced RLS incurs bounded overhead $\le \sim 2\%$ (95\% CI), achieving throughput statistically equivalent ($\pm 5\%$, $p_{\text{TOST}} < 10^{-8}$) to application-only filtering under the evaluated microbenchmark environment. Dual-layer isolation provides robust defense-in-depth without compromising operational performance.
 
-\section*{Acknowledgment}
-The authors thank the Department of Information Technology, MIT School of Computing, MIT Art, Design and Technology University, Pune, for research infrastructure and technical support.
-
-\section*{Funding Statement}
-This research received no external grant funding.
-
-\section*{Author Contributions}
-I.~Poonawala and V.~Mandhare conceived the dual-layer architecture, engineered the platform, and conducted benchmarks. T.~Shinde contributed to catalog guardrails and test suite development. Prof.~R.~Kerketta supervised the research, reviewed the theoretical formulation, and provided methodological guidance. Corresponding author: Varad Mandhare (varadmandhare924@gmail.com).
-
-\section*{Code and Data Availability}
-The benchmark reproduction scripts, raw per-run CSV records ($n=30$), test suites, and schema generators are available at: \url{https://github.com/Varadha9/multi-tenant-saas-platform}.
-
-\section*{Conflict of Interest and AI-Assisted Research}
-The authors declare no competing financial or commercial conflicts of interest. Large language models were utilized for copy-editing, reference formatting assistance, and LaTeX syntax checking under comprehensive manual verification by the authors.
+\section*{Acknowledgment and Declarations}
+The authors thank the Department of Information Technology, MIT School of Computing, MIT Art, Design and Technology University, Pune, for research support. \textbf{Funding:} None. \textbf{Author Contributions:} I.~Poonawala and V.~Mandhare conceived the dual-layer architecture, engineered the platform, and conducted benchmarks. T.~Shinde contributed to catalog guardrails and test suite development. Prof.~R.~Kerketta supervised the research and reviewed the theoretical formulation. Corresponding author: Varad Mandhare (varadmandhare924@gmail.com). \textbf{Data Availability:} Reproduction scripts, raw CSV records ($n=30$), and test suites are available at: \url{https://github.com/Varadha9/multi-tenant-saas-platform}. \textbf{Conflict of Interest:} None. Large language models were utilized for copy-editing under manual verification.
 
 \bibliographystyle{IEEEtran}
 \begin{thebibliography}{00}
-\fontsize{7.2pt}{8.4pt}\selectfont
+\fontsize{6.8pt}{7.8pt}\selectfont
 \setlength{\itemsep}{0pt}
 \setlength{\parskip}{0pt}
 
@@ -657,7 +644,7 @@ C.-P. Bezemer and A.~Zaidman, ``Multi-tenant SaaS applications: Maintenance drea
 J.~Kabbedijk, C.-P. Bezemer, S.~Jansen, and A.~Zaidman, ``Defining multi-tenancy: A systematic mapping study on the academic and the industrial perspective,'' \emph{J. Systems and Software}, vol.~100, pp.~139--148, 2015.
 
 \bibitem{jacobs2007}
-D.~Jacobs and S.~Aulbach, ``Ruminations on multi-tenant databases,'' in \emph{Proc. Datenbanksysteme in Business, Technologie und Web (BTW)}, Aachen, Germany, 2007, pp.~514--521.
+D.~Jacobs and S.~Aulbach, ``Ruminations on multi-tenant databases,'' in \emph{Proc. BTW Conference}, Aachen, Germany, 2007, pp.~514--521.
 
 \bibitem{weissman2009}
 C.~D. Weissman and S.~Bobrowski, ``The design of the force.com multitenant internet application development platform,'' in \emph{Proc. ACM SIGMOD Int. Conf. Management of Data}, Providence, RI, USA, 2009, pp.~889--896.
