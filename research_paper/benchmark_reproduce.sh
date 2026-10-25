@@ -8,162 +8,56 @@
 
 set -euo pipefail
 
-DB_HOST="${DB_HOST:-localhost}"
-DB_PORT="${DB_PORT:-5433}"
-DB_USER="${DB_USER:-nexusops_app}"
-DB_NAME="${DB_NAME:-nexusops}"
-PGPASSWORD="${PGPASSWORD:-nexusops_app_local}"
-export PGPASSWORD
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH_DIR="${SCRIPT_DIR}/benchmark"
-mkdir -p "${BENCH_DIR}"
 
-echo "=== 1. Initializing Benchmark Schema & 1,000,000 Rows ==="
-PGPASSWORD=nexusops_owner_local psql -h "${DB_HOST}" -p "${DB_PORT}" -U nexusops_owner -d "${DB_NAME}" << 'EOSQL'
-DROP TABLE IF EXISTS bench_filter CASCADE;
-DROP TABLE IF EXISTS bench_rls CASCADE;
+DB_HOST="${DB_HOST:-localhost}"
+DB_PORT="${DB_PORT:-5433}"
+DB_NAME="${DB_NAME:-nexusops}"
+OWNER_USER="${OWNER_USER:-nexusops_owner}"
+OWNER_PASSWORD="${OWNER_PASSWORD:-nexusops_owner_local}"
+APP_USER="${APP_USER:-nexusops_app}"
+APP_PASSWORD="${APP_PASSWORD:-nexusops_app_local}"
 
--- 1. Variant A: Filter-Only Baseline Table (No RLS)
-CREATE TABLE bench_filter (
-    id BIGSERIAL PRIMARY KEY,
-    tenant_id UUID NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    email VARCHAR(255) NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX idx_bench_filter_tenant_name ON bench_filter(tenant_id, name);
+export DB_HOST DB_PORT DB_NAME OWNER_USER OWNER_PASSWORD APP_USER APP_PASSWORD
 
--- 2. Variant B: Forced RLS Table (Permissive Policy with WITH CHECK)
-CREATE TABLE bench_rls (
-    id BIGSERIAL PRIMARY KEY,
-    tenant_id UUID NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    email VARCHAR(255) NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX idx_bench_rls_tenant_name ON bench_rls(tenant_id, name);
+echo "=============================================================================="
+echo "    NEXUSOPS EMPIRICAL MULTI-TENANT BENCHMARK REPRODUCTION SUITE"
+echo "=============================================================================="
 
-ALTER TABLE bench_rls ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bench_rls FORCE ROW LEVEL SECURITY;
+# 1. Connectivity Check
+if ! pg_isready -h "${DB_HOST}" -p "${DB_PORT}" -U "${OWNER_USER}" -d "${DB_NAME}" >/dev/null 2>&1; then
+    echo "[!] PostgreSQL is not responding on ${DB_HOST}:${DB_PORT}."
+    echo "    Please start the database container before executing benchmarks."
+    exit 1
+fi
+echo "[+] PostgreSQL 17 online at ${DB_HOST}:${DB_PORT}/${DB_NAME}"
 
--- Production-aligned permissive policy for nexusops_app (pure equality on tenant_id)
-CREATE POLICY tenant_isolation ON bench_rls
-  FOR ALL TO nexusops_app
-  USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
-  WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
+# 2. Database Schema and Deterministic Data Seeding
+echo ""
+echo "=== Step 1: Initializing Database Schema & Seeding 1M Records ==="
+PGPASSWORD="${OWNER_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${OWNER_USER}" -d "${DB_NAME}" -f "${BENCH_DIR}/setup_schema.sql" >/dev/null
+echo "[+] Schema created, partitioned records seeded, and RLS policies enforced."
 
--- Grant privileges to runtime role
-GRANT SELECT, INSERT, UPDATE, DELETE ON bench_filter TO nexusops_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON bench_rls TO nexusops_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO nexusops_app;
+# 3. Real Empirical pgbench Execution
+echo ""
+echo "=== Step 2: Executing Real Empirical pgbench Workloads (n=30 paired runs) ==="
+python3 "${BENCH_DIR}/run_real_benchmark.py"
 
--- Seed 1,000,000 rows partitioned across 100 deterministic tenants (10,000 rows each)
-DO $$
-DECLARE
-    t INT;
-    tid UUID;
-BEGIN
-    FOR t IN 1..100 LOOP
-        tid := md5(t::text)::uuid;
-        INSERT INTO bench_filter (tenant_id, name, email)
-        SELECT 
-            tid,
-            'Contact ' || (t * 10000 + s),
-            'contact_' || s || '@tenant' || t || '.test'
-        FROM generate_series(1, 10000) AS s;
-    END LOOP;
-END $$;
+# 4. Statistical Analysis & TOST Equivalence Testing
+echo ""
+echo "=== Step 3: Conducting Statistical Analysis & Equivalence Testing ==="
+python3 "${BENCH_DIR}/analyze_real.py"
 
-INSERT INTO bench_rls SELECT * FROM bench_filter;
-VACUUM ANALYZE bench_filter;
-VACUUM ANALYZE bench_rls;
-EOSQL
+# 5. Figure Generation
+echo ""
+echo "=== Step 4: Generating Figure 3 Directly from Measured Data ==="
+python3 "${SCRIPT_DIR}/generate_figures.py"
 
-echo "=== 2. Creating Transaction-Scoped pgbench Workload Scripts ==="
-# Workload 1: Point Lookup
-# Variant 1: Filter Baseline
-cat << 'EOF_SQL' > "${BENCH_DIR}/point_lookup_filter.sql"
-\set tenant_num random(1, 100)
-\set id random(1, 1000000)
-BEGIN;
-SELECT id, tenant_id, name, email FROM bench_filter WHERE id = :id AND tenant_id = md5(:tenant_num::text)::uuid;
-COMMIT;
-EOF_SQL
-
-# Variant 2: Filter + Sanitization GUC
-cat << 'EOF_SQL' > "${BENCH_DIR}/point_lookup_sanitized.sql"
-\set tenant_num random(1, 100)
-\set id random(1, 1000000)
-BEGIN;
-SELECT set_config('app.tenant_id', md5(:tenant_num::text), true);
-SELECT id, tenant_id, name, email FROM bench_filter WHERE id = :id AND tenant_id = md5(:tenant_num::text)::uuid;
-COMMIT;
-EOF_SQL
-
-# Variant 3: Dual-Layer (Filter + Forced RLS)
-cat << 'EOF_SQL' > "${BENCH_DIR}/point_lookup_dual.sql"
-\set tenant_num random(1, 100)
-\set id random(1, 1000000)
-BEGIN;
-SELECT set_config('app.tenant_id', md5(:tenant_num::text), true);
-SELECT id, tenant_id, name, email FROM bench_rls WHERE id = :id AND tenant_id = md5(:tenant_num::text)::uuid;
-COMMIT;
-EOF_SQL
-
-# Workload 2: Paged List (Keyset pagination at randomized start key)
-cat << 'EOF_SQL' > "${BENCH_DIR}/paged_list_filter.sql"
-\set tenant_num random(1, 100)
-\set start_num random(1, 9800)
-BEGIN;
-SELECT id, name, email FROM bench_filter WHERE tenant_id = md5(:tenant_num::text)::uuid AND name >= ('Contact ' || :start_num) ORDER BY name LIMIT 20;
-COMMIT;
-EOF_SQL
-
-cat << 'EOF_SQL' > "${BENCH_DIR}/paged_list_dual.sql"
-\set tenant_num random(1, 100)
-\set start_num random(1, 9800)
-BEGIN;
-SELECT set_config('app.tenant_id', md5(:tenant_num::text), true);
-SELECT id, name, email FROM bench_rls WHERE tenant_id = md5(:tenant_num::text)::uuid AND name >= ('Contact ' || :start_num) ORDER BY name LIMIT 20;
-COMMIT;
-EOF_SQL
-
-# Workload 3: Tenant Count
-cat << 'EOF_SQL' > "${BENCH_DIR}/tenant_count_filter.sql"
-\set tenant_num random(1, 100)
-BEGIN;
-SELECT count(*) FROM bench_filter WHERE tenant_id = md5(:tenant_num::text)::uuid;
-COMMIT;
-EOF_SQL
-
-cat << 'EOF_SQL' > "${BENCH_DIR}/tenant_count_dual.sql"
-\set tenant_num random(1, 100)
-BEGIN;
-SELECT set_config('app.tenant_id', md5(:tenant_num::text), true);
-SELECT count(*) FROM bench_rls WHERE tenant_id = md5(:tenant_num::text)::uuid;
-COMMIT;
-EOF_SQL
-
-# Workload 4: Point Insert
-cat << 'EOF_SQL' > "${BENCH_DIR}/point_insert_filter.sql"
-\set tenant_num random(1, 100)
-\set s random(1000001, 9999999)
-BEGIN;
-INSERT INTO bench_filter (tenant_id, name, email) VALUES (md5(:tenant_num::text)::uuid, 'New User ' || :s, 'new_' || :s || '@tenant.test');
-COMMIT;
-EOF_SQL
-
-cat << 'EOF_SQL' > "${BENCH_DIR}/point_insert_dual.sql"
-\set tenant_num random(1, 100)
-\set s random(1000001, 9999999)
-BEGIN;
-SELECT set_config('app.tenant_id', md5(:tenant_num::text), true);
-INSERT INTO bench_rls (tenant_id, name, email) VALUES (md5(:tenant_num::text)::uuid, 'New User ' || :s, 'new_' || :s || '@tenant.test');
-COMMIT;
-EOF_SQL
-
-echo "=== 3. Benchmark Protocol Ready (8 clients, 4 threads, 30s, 30 paired runs) ==="
-echo "Workloads: Point Lookup, Paged List, Tenant Count, Point Insert"
-echo "All scripts and RLS schemas generated at ${BENCH_DIR}."
-chmod +x "${SCRIPT_DIR}/benchmark_reproduce.sh"
+echo ""
+echo "=============================================================================="
+echo "    [SUCCESS] All empirical benchmarks and statistical analyses completed."
+echo "    Raw data:    research_paper/benchmark/results/raw_runs.csv"
+echo "    Summary:     research_paper/benchmark/results/summary.csv"
+echo "    Figure 3:    research_paper/figures/fig3_benchmark_ratio.pdf"
+echo "=============================================================================="
