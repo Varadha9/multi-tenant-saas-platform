@@ -113,7 +113,7 @@ Multi-tenancy defines an architectural paradigm wherein a single software instan
     \item \textit{Shared Table (Pool Model):} All tenants share identical database tables, with individual records segregated by a mandatory \texttt{tenant\_id} foreign key column.
 \end{enumerate}
 
-Jacobs and Aulbach \cite{jacobs2007} and Aulbach et al. \cite{aulbach2008} analyzed shared-table schema-mapping patterns, demonstrating that pooled models achieve maximum hardware consolidation and tenant density. Weissman and Bobrowski \cite{weissman2009} detailed Salesforce's Force.com multi-tenant engine, which utilizes proprietary metadata-driven query rewrites to enforce organizational boundaries. Guo et al. \cite{guo2007} and Krebs et al. \cite{krebs2012} articulated that native multi-tenancy requires isolating data, performance, and operational boundaries independently. Schiller et al. \cite{schiller2011} and Narasayya and Chaudhuri \cite{narasayya2022} investigated database-engine mechanisms for multi-tenant consolidation in relational engines. Curino et al. \cite{curino2010} and Srivastava et al. \cite{vldb2016multitenant} demonstrated that workload consolidation across relational databases requires robust performance predictability alongside security. The AWS SaaS Architecture guidance \cite{aws2020} emphasizes that pooled schemas necessitate programmatic policy enforcement to eliminate single-point-of-failure reliance on software developers. Table \ref{tab:comparison} contrasts existing approaches and literature against the complete NexusOps framework across ten critical architectural dimensions.
+Jacobs and Aulbach \cite{jacobs2007} and Aulbach et al. \cite{aulbach2008} analyzed shared-table schema-mapping patterns, demonstrating that pooled models achieve maximum hardware consolidation and tenant density. Weissman and Bobrowski \cite{weissman2009} detailed Salesforce's Force.com multi-tenant engine, which utilizes proprietary metadata-driven query rewrites to enforce organizational boundaries. Guo et al. \cite{guo2007} and Krebs et al. \cite{krebs2012} articulated that native multi-tenancy requires isolating data, performance, and operational boundaries independently. Schiller et al. \cite{schiller2011} and Narasayya and Chaudhuri \cite{narasayya2022} investigated database-engine mechanisms for multi-tenant consolidation in relational engines. Curino et al. \cite{curino2010} demonstrated that workload consolidation across relational databases requires robust performance predictability alongside security. The AWS SaaS Architecture guidance \cite{aws2020} emphasizes that pooled schemas necessitate programmatic policy enforcement to eliminate single-point-of-failure reliance on software developers. Table \ref{tab:comparison} contrasts existing approaches and literature against the complete NexusOps framework across ten critical architectural dimensions.
 
 \begin{table*}[t]
 \renewcommand{\arraystretch}{0.95}
@@ -318,7 +318,7 @@ Prop. 5 (Anti-Enumeration) & \texttt{CrossTenantApiIT} (7 HTTP suites) & ID-bear
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.95\columnwidth]{figures/fig1_architecture.png}
+\includegraphics[width=0.95\columnwidth]{figures/fig1_architecture.pdf}
 \caption{Modular monolith architecture of NexusOps. Functional domain modules communicate through Spring Modulith boundaries and access PostgreSQL via the shared \texttt{TenantAwareDataSource}.}
 \label{fig:arch}
 \end{figure}
@@ -836,11 +836,12 @@ While dual-layer isolation effectively mitigates cross-tenant data leaks, severa
     \item \textbf{PgBouncer and Connection Proxy Buffering:} While transaction-scoped settings are architecturally compatible with PgBouncer in transaction-pooling mode, intermediate proxy buffering and connection handshake latency were not benchmarked directly in this study.
     \item \textbf{High-Dimensional Vector Search Partitioning:} In large-scale vector similarity deployments (\texttt{pgvector}), HNSW graph post-filtering requires dedicated partition-per-tenant table strategies to prevent recall attenuation.
     \item \textbf{Token Revocation Window:} A 15-minute JWT lifetime leaves a temporary window during which a suspended tenant's token could remain valid without active Redis revocation checks.
-    \item \textbf{Distributed Scale-Out and Sharding:} Our evaluation focuses on single-node PostgreSQL. Distributed multi-tenant architectures (e.g., Citus, CockroachDB, or Google Spanner \cite{corbett2013spanner, taft2020cockroachdb}) require dedicated distributed transaction evaluations.
+    \item \textbf{Distributed Scale-Out and Sharding:} Our evaluation focuses on single-node PostgreSQL. Distributed multi-tenant architectures (e.g., Citus, CockroachDB, or Google Spanner) require dedicated distributed transaction evaluations.
 \end{itemize}
 
 Future work will evaluate distributed sharding with forced RLS and investigate cryptographic tenant context signing checked directly within the database engine kernel.
 
+\newpage
 \section{Conclusion}
 \label{sec:conclusion}
 This paper presented the dual-layer tenant isolation architecture of NexusOps. By pairing Hibernate ORM tenant discriminators with PostgreSQL forced Row-Level Security, multi-tenant SaaS applications achieve resilient defense-in-depth against data leakage. Through transaction-scoped connection sanitization, build-time catalog verification, and eager role guards, the architecture provably mitigates connection bleed and configuration drift. 
@@ -852,6 +853,8 @@ The authors thank the Department of Information Technology, MIT School of Comput
 
 \bibliographystyle{IEEEtran}
 \begin{thebibliography}{00}
+\setlength{\itemsep}{1.5pt}
+\setlength{\parskip}{0pt}
 
 \bibitem{panko1998}
 R.~R. Panko, ``What we know about spreadsheet errors,'' \emph{J. End User Computing}, vol.~10, no.~2, pp.~15--21, 1998.
@@ -967,36 +970,23 @@ D.~Lakens, A.~M. Scheel, and P.~M. Isager, ``Equivalence testing for psychologic
 \bibitem{curino2010}
 C.~Curino, E.~P.~C. Jones, Y.~Zhang, and S.~Madden, ``Relational cloud: A database-as-a-service for the cloud,'' \emph{CIDR}, pp.~235--240, 2011.
 
-\bibitem{vldb2016multitenant}
-B.~Srivastava, A.~Dey, R.~Bhardwaj, and P.~Sengupta, ``Scalable multi-tenant databases in cloud environments,'' in \emph{Proc. VLDB Endowment}, vol.~9, no.~13, pp.~1413--1424, 2016.
-
-\bibitem{corbett2013spanner}
-J.~C. Corbett et al., ``Spanner: Google's globally distributed database,'' \emph{ACM Trans. Computer Systems}, vol.~31, no.~3, pp.~1--22, 2013.
-
-\bibitem{taft2020cockroachdb}
-R.~Taft et al., ``CockroachDB: The resilient geo-distributed SQL database,'' in \emph{Proc. ACM SIGMOD Int. Conf. Management of Data}, pp.~1493--1509, 2020.
-
-\bibitem{armstrong2013linkbench}
-T.~G. Armstrong, V.~Ponnekanti, D.~Borthakur, and M.~Callaghan, ``LinkBench: A database benchmark based on the Facebook social graph,'' in \emph{Proc. ACM SIGMOD Int. Conf. Management of Data}, pp.~1185--1196, 2013.
-
-\bibitem{cooper2010ycsb}
-B.~F. Cooper, A.~Silberstein, E.~Tam, R.~Ramakrishnan, and R.~Sears, ``Benchmarking cloud serving systems with YCSB,'' in \emph{Proc. 1st ACM Symp. Cloud Computing (SoCC)}, pp.~143--154, 2010.
-
-\bibitem{diffie1976new}
-W.~Diffie and M.~Hellman, ``New directions in cryptography,'' \emph{IEEE Trans. Information Theory}, vol.~22, no.~6, pp.~644--654, 1976.
-
-\bibitem{rivest1978method}
-R.~L. Rivest, A.~Shamir, and L.~Adleman, ``A method for obtaining digital signatures and public-key cryptosystems,'' \emph{Communications of the ACM}, vol.~21, no.~2, pp.~120--126, 1978.
-
-\bibitem{lamport1978time}
-L.~Lamport, ``Time, clocks, and the ordering of events in a distributed system,'' \emph{Communications of the ACM}, vol.~21, no.~7, pp.~558--565, 1978.
-
-\bibitem{gray1992benchmark}
-J.~Gray, \emph{The Benchmark Handbook for Database and Transaction Systems}. San Mateo, CA: Morgan Kaufmann, 1993.
-
-\bibitem{stonebraker2010end}
-M.~Stonebraker et al., ``The end of an architectural era (it's time for a complete rewrite),'' in \emph{Proc. 33rd Int. Conf. Very Large Data Bases (VLDB)}, pp.~1150--1160, 2007.
-
 \end{thebibliography}
+
+\begin{IEEEbiographynophoto}{Ibrahim Poonawala}
+is currently pursuing his undergraduate studies in Information Technology at the MIT School of Computing, MIT Art, Design and Technology University, Pune, India. His research interests include distributed cloud architectures, enterprise software engineering, and multi-tenant security frameworks.
+\end{IEEEbiographynophoto}
+
+\begin{IEEEbiographynophoto}{Varad Mandhare}
+is currently pursuing his undergraduate studies in Information Technology at the MIT School of Computing, MIT Art, Design and Technology University, Pune, India. His research focuses on relational database performance, database-tier access control mechanisms, and empirical benchmarking in cloud computing systems.
+\end{IEEEbiographynophoto}
+
+\begin{IEEEbiographynophoto}{Tanmay Shinde}
+is currently pursuing his undergraduate studies in Information Technology at the MIT School of Computing, MIT Art, Design and Technology University, Pune, India. His research interests center on automated software verification, static analysis tooling, and fault-injection mutation testing for enterprise software systems.
+\end{IEEEbiographynophoto}
+
+\begin{IEEEbiographynophoto}{Reetika Kerketta}
+is an Assistant Professor in the Department of Information Technology at the MIT School of Computing, MIT Art, Design and Technology University, Pune, India. Her research specializations include cloud data security, enterprise software architecture, and secure multi-tenant information systems.
+\end{IEEEbiographynophoto}
+
 
 \end{document}
