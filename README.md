@@ -407,3 +407,13 @@ Backend allows requests to /api/crm/* for this tenant
 - [Tech Stack](docs/TECH_STACK.md)
 - [Development Plan](docs/DEVELOPMENT_PLAN.md)
 - [Business Model](docs/BUSINESS_MODEL.md)
+
+---
+
+## Academic Research Paper & Mendeley Library
+
+- **Research Manuscript (16 Pages, IEEEtran):** [research_paper/main.pdf](research_paper/main.pdf) — *"Dual-Layer Tenant Isolation in Shared-Schema SaaS: Combining ORM Filters with PostgreSQL Row-Level Security"*
+- **Mendeley Reference Guide & Highlights:** [research_paper/MENDELEY_LIBRARY.md](research_paper/MENDELEY_LIBRARY.md)
+- **BibTeX Database:** [research_paper/references.bib](research_paper/references.bib) (39 entries with DOIs, abstracts, and analytical notes)
+- **Universal RIS Library:** [research_paper/references.ris](research_paper/references.ris) (1-click import into Mendeley Reference Manager & Desktop)
+- **Figure & Benchmark Reproducibility:** [research_paper/generate_figures.py](research_paper/generate_figures.py) and [research_paper/benchmark/results/raw_runs.csv](research_paper/benchmark/results/raw_runs.csv)
