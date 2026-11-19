@@ -35,6 +35,7 @@
     belowskip=4pt
 }
 
+
 \begin{document}
 
 \title{Dual-Layer Tenant Isolation in Shared-Schema SaaS: Combining ORM Filters with PostgreSQL Row-Level Security}
@@ -70,13 +71,12 @@ reetika.kerketta@mituniversity.edu.in}
 }
 
 \maketitle
-
 \begin{abstract}
-Multi-tenant SaaS systems in the modern era count on shared-schema databases to keep cloud hosting costs manageable. But crowding several organizations together in common tables creates an acute reliability hazard: tenant boundaries depend almost entirely on developer discipline. If an engineer forgets a single tenant filter, the database reveals private customer information without warning. In this paper, we assess NexusOps, a production-grade operations platform built with Spring Boot and PostgreSQL that isolates tenants at the ORM level and at the database storage engine. Rather than regarding application filters and Row-Level Security (RLS) as competing alternatives, we integrate them into a unified defense-in-depth approach.
+Multi-tenant Software-as-a-Service (SaaS) applications often use shared-schema databases to reduce infrastructure and hosting costs. Although this approach makes efficient use of database resources, it also creates challenges in keeping customer data separate. Since multiple organizations store their records in the same tables, tenant isolation depends partly on how application queries are implemented. A missing tenant condition in even one query can allow users to access information belonging to another organization.
 
-We evaluate the platform's formal architecture, operational semantics, threat model, and empirical performance. Rather than asserting novelty in application filters or database row security individually, our contributions provide: (1) an end-to-end connection lifecycle protocol ensuring robust transaction-scoped tenant binding across recycled connection pools; (2) formal operational semantics and an inductive proof of non-interference under connection cycling; (3) an automated verification framework combining AST expression catalog guards and startup role guards to stop policy drift across continuous schema evolution; (4) an empirical security evaluation using canary tokens, positive controls, and a 16-mutant fault-injection matrix; (5) a developer experience and industrial case study evaluating migration ergonomics and operational maintainability; and (6) a statistically powered equivalence evaluation measuring runtime overhead across microbenchmarks, relational graph joins, heavy-tailed Pareto tenant skew, and connection pool saturation.
+This paper presents an evaluation of NexusOps, an operations platform developed using Spring Boot and PostgreSQL. The platform uses two layers of tenant protection: filtering at the Object-Relational Mapping (ORM) level and Row-Level Security (RLS) at the database level. Both mechanisms work together to restrict access to tenant-specific records, rather than relying entirely on application-level checks.
 
-Empirical security evaluation demonstrates zero cross-tenant leakage across 1,000,000 requests over 100 concurrent workers with 940,000 tenant context transitions over a 32-connection pool (Hanley--Lippman-Hand Rule-of-Three 95\% upper bound $p < 3 \times 10^{-6}$ for the evaluated harness). Microbenchmarks across 1,000,000 tuples on PostgreSQL 17 ($n = 30$ randomized paired runs) show that database-tier forced RLS incurs bounded engine overhead between 2.3\% and 8.8\% over sanitized baselines (Two One-Sided Tests confirming equivalence within a $\pm 10\%$ corridor, $p < 0.05$), with total transaction-scoped sanitization incurring an expected 9--27\% protocol throughput cost under individual statement dispatch while adding only 0.17--0.44 ms to mean latency and $< 0.8$ ms to p99 tail latency across point lookups, paged traversals, aggregate counts, writes, multi-table joins, and Pareto-skewed tenant distributions.
+The study examines the system architecture, connection lifecycle management, security properties, and runtime performance. It also introduces a transaction-scoped connection protocol to prevent tenant context from carrying over when pooled database connections are reused. The proposed approach is evaluated through automated security tests, a 16-mutant fault-injection matrix, and performance benchmarks involving 1,000,000 database tuples on PostgreSQL 17. During a concurrency test involving 1,000,000 requests, 100 workers, 32 pooled connections, and 940,000 tenant context transitions, no cross-tenant data leakage was observed. The database-level RLS overhead ranged from 2.3\% to 8.8\% compared with sanitized baselines. Overall, the results indicate that combining ORM-level filtering with database-enforced security can provide an additional layer of tenant protection while keeping the measured performance overhead within the evaluated limits.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -86,49 +86,57 @@ Multi-tenancy, Software-as-a-Service, Row-Level Security, PostgreSQL, Tenant Iso
 \IEEEpeerreviewmaketitle
 
 \section{Introduction}
-\IEEEPARstart{M}{ost} emerging commercial businesses conduct their everyday business transactions on an ad-hoc basis, using paper ledgers, fragmented chat threads, and fragile spreadsheets. Whether tracking sales leads, reconciling physical stock, or creating invoices, manual record-keeping remains prevalent in modern business workflows. Software engineering audits consistently reveal that manual workflows are invariably inefficient, inaccurate, and distracting.
+\IEEEPARstart{M}{any} businesses still rely on spreadsheets, paper records, and messaging platforms to manage their daily operations. Tasks such as tracking sales leads, maintaining inventory, and preparing invoices are often handled through these tools. Although they are easy to adopt, managing business information in this way can lead to errors, inconsistencies, and difficulties in maintaining accurate records. Previous studies by Panko \cite{panko1998} and Powell et al. \cite{powell2009} have also highlighted the frequency of errors in operational spreadsheets, showing how unreliable manual record-keeping can affect business activities.
 
-Panko \cite{panko1998} and Powell et al. \cite{powell2009} discovered that operational spreadsheets are remarkably fragile: over 88\% of audited enterprise spreadsheets contain calculation errors, which directly result in lost inventory, billing discrepancies, and unauthorized data exposure. Cloud-based Software-as-a-Service (SaaS) products solve these operational bottlenecks by centralizing business logic and implementing rigorous data validation.
+Cloud-based Software-as-a-Service (SaaS) applications provide an alternative by bringing business operations and data management into a centralized platform. However, operating such platforms also involves financial considerations. Smaller businesses generally have limited budgets for software subscriptions, which makes it difficult for SaaS providers to maintain a separate database or virtual machine for every customer. To address this limitation, many providers use a shared-schema architecture in which multiple organizations store their records within the same database tables \cite{chong2006, aulbach2008, armbrust2010}. This approach improves resource utilization and can significantly reduce hosting costs compared with maintaining separate database environments for each tenant \cite{kabbedijk2015}.
 
-However, commercial SaaS vendors face harsh economic realities. Small enterprise subscription margins are quite slim, meaning customers are willing to pay only modest amounts. Dedicated database instances or segregated virtual machines are financially impractical. Cloud architects instead resort to shared-schema pooling, where thousands of client organizations share common compute runtimes and unified database tables \cite{chong2006, aulbach2008, armbrust2010}. Optimizing buffer pool sharing and hardware utilization through shared tables decreases per-tenant hosting expenses by an order of magnitude compared to isolated database silos \cite{kabbedijk2015}.
+\subsection{Security Challenges in Shared-Schema Databases}
+Although shared-schema databases offer practical advantages, they require careful handling of tenant data. Records belonging to different organizations are stored within the same tables and are usually distinguished by a column such as \texttt{tenant\_id}. As a result, database queries must include the appropriate tenant condition to ensure that each organization can access only its own records.
 
-\subsection{The Achilles' Heel of Shared-Schema Consolidation}
-Despite its compelling infrastructure consolidation economics, shared-schema multi-tenancy introduces severe data security challenges. In a pooled architecture, records from fierce commercial competitors reside as adjacent rows within the exact same relational database tables, separated solely by a discriminative tenant identifier column (e.g., \texttt{tenant\_id}). Consequently, every single Structured Query Language (SQL) statement executed against the database persistence tier must incorporate an explicit tenant discrimination predicate (e.g., \texttt{WHERE tenant\_id = :current\_tenant}).
+For example, a query retrieving customer information should include a condition such as \texttt{WHERE tenant\_id = :current\_tenant}. If a developer forgets to include this condition while creating a new REST endpoint, reporting query, batch operation, or native SQL statement, the database may execute the query without restricting it to the intended tenant. Depending on the operation, this can expose, modify, or delete records belonging to another organization.
 
-If an application software engineer inadvertently omits this clause when implementing a new REST endpoint, generating an operational reporting query, executing a bulk batch job, or issuing a raw native database statement, the database engine does not raise an alert or trigger an exception. Instead, it faithfully and silently executes the unconstrained query, retrieving, updating, or purging alien customer data across tenant boundaries.
+This issue is closely related to Broken Access Control and Broken Object Level Authorization (BOLA), both of which are recognized security concerns in modern application development \cite{owasp2021, owaspapi2023}. The Verizon Data Breach Investigations Report also identifies human-related factors, including configuration mistakes, missing security checks, and credential misuse, as significant contributors to security incidents \cite{verizon2023}. IBM has further reported substantial financial consequences associated with enterprise data breaches \cite{ibm2023}. For SaaS providers, cross-tenant data exposure can directly impair customer confidence, business continuity, and regulatory compliance.
 
-Broken access control and Broken Object Level Authorization (BOLA) consistently rank as the primary vulnerability in cloud API security surveys and the OWASP API Security Top 10 \cite{owasp2021, owaspapi2023}. Verizon's comprehensive Data Breach Investigations Report reveals that human elements---encompassing code omissions, system misconfigurations, privilege misuse, and credential leakage---are implicated in 74\% of all analyzed cybersecurity breaches \cite{verizon2023}. Concurrently, IBM's global cost analysis places the average financial consequence of an enterprise data breach at USD 4.45 million \cite{ibm2023}. For an emerging SME SaaS vendor, a single cross-tenant data leak represents not merely technical debt, but severe statutory liability under privacy regulations (such as GDPR, CCPA, and HIPAA), catastrophic customer churn, and irreparable brand destruction.
+\subsection{The Need for Defense-in-Depth}
+The principle of defense-in-depth, discussed by Saltzer and Schroeder \cite{saltzer1975}, emphasizes that critical security mechanisms should not depend on a single protective measure. Applying this principle to multi-tenant databases means enforcing tenant restrictions at more than one level.
 
-\subsection{The Defense-in-Depth Conundrum}
-Decades ago, Saltzer and Schroeder articulated the foundational principle of defense-in-depth: critical systems should never depend on a single point of failure \cite{saltzer1975}. In SaaS database platforms, that means enforcing tenant boundaries within application code while simultaneously backing them up inside the relational engine using native Row-Level Security (RLS) \cite{aws2020, postgresql17docs, postgresql17notes}. When applied properly, RLS guarantees that even if application logic completely forgets a WHERE clause, the database engine itself drops or rejects rows that do not belong to the active tenant.
+At the application level, Object-Relational Mapping (ORM) frameworks such as Hibernate can automatically apply tenant conditions when generating database queries. This reduces the need for developers to manually include tenant filters in every operation. However, ORM-based filtering does not cover every possible database interaction. Native SQL and direct JDBC operations may bypass the ORM layer.
 
-Why, then, do so many engineering teams shy away from database RLS? In conversations with practitioners, two practical worries emerge repeatedly. First, developers dread query planner regressions: there is a widespread belief that injecting dynamic session functions into SQL queries blinds PostgreSQL's optimizer, ruins index-only scans, prevents join pushdowns, and introduces erratic latency spikes. Second, platform engineers worry about operational leaks: in high-throughput services using connection poolers like HikariCP, physical sockets might carry session variables from one user request into the next, while rapid Flyway migrations might quietly introduce new tables that miss RLS policies altogether.
+PostgreSQL Row-Level Security (RLS) provides an additional mechanism for controlling which rows can be accessed or modified. With an appropriate policy in place, PostgreSQL evaluates the tenant condition at the database level, providing protection even when an application query does not contain an explicit tenant filter \cite{aws2020, postgresql17docs, postgresql17notes}.
 
-\subsection{Our Contributions}
-This paper presents the formal architecture, operational semantics, threat model, and empirical evaluation of NexusOps, an enterprise modular operations platform engineered with Spring Boot on PostgreSQL that enforces multi-tenant isolation through defense-in-depth. Rather than asserting novelty in application filters or database row security individually, our contribution provides:
+Despite these advantages, adopting database-level RLS introduces practical considerations. One concern is its effect on query execution and overall application performance. Developers may be concerned about additional policy evaluation and its impact on query planning, indexing, and response times. Another concern involves connection pooling. Frameworks such as HikariCP reuse physical database connections across multiple requests, so tenant-specific session information must be managed carefully to prevent one request from affecting another. Database migrations also require attention because newly created tables may be left without the necessary security policies.
+
+These concerns make it important to evaluate not only the security benefits of combining ORM filtering and RLS, but also the way both mechanisms behave during normal application execution.
+
+\subsection{Contributions of This Work}
+This paper presents the design and evaluation of NexusOps, an operations management platform developed using Spring Boot and PostgreSQL. The platform combines application-level tenant filtering with database-enforced Row-Level Security to provide two layers of protection for tenant-owned data.
+
+The main contributions of this work are as follows:
 \begin{enumerate}
-\item \textbf{Transaction-Scoped Connection Protocol:} An end-to-end integration and connection lifecycle protocol that ensures robust transaction-scoped tenant binding across recycled connection pools (Section \ref{sec:system_design}).
-\item \textbf{Formal Semantics and Inductive Proof:} Formal operational semantics and an inductive proof of non-interference under continuous connection cycling (Section \ref{sec:threat_model}).
-\item \textbf{Automated Schema Guardrails:} An automated verification framework combining AST expression catalog guards and startup role guards that prevents policy drift across continuous schema evolution (Section \ref{sec:guardrails}).
-\item \textbf{Empirical Security Evaluation:} An empirical security evaluation framework utilizing canary tokens, positive controls, and a 16-mutant fault-injection matrix demonstrating zero cross-tenant leakage (Section \ref{sec:sec_eval}).
-\item \textbf{Industrial Case Study:} A comprehensive developer experience and industrial case study evaluating migration ergonomics and operational maintainability (Section \ref{sec:devex}).
-\item \textbf{Equivalence Evaluation:} A statistically powered equivalence evaluation measuring runtime overhead across microbenchmarks, relational graph joins, heavy-tailed Pareto tenant skew, and connection pool saturation (Section \ref{sec:evaluation}).
+\item \textbf{Transaction-Scoped Connection Protocol:} We describe a connection lifecycle mechanism that binds tenant information to the active database transaction and manages its cleanup when pooled connections are reused.
+\item \textbf{Formal Semantics and Security Proof:} We define the operational behavior of tenant-aware query execution and provide an inductive proof to examine non-interference between tenant contexts during connection reuse.
+\item \textbf{Automated Schema Verification:} We introduce verification mechanisms that inspect database policies and their expressions, helping identify missing or incorrectly configured RLS policies during schema changes and application startup.
+\item \textbf{Security Evaluation:} We evaluate the isolation mechanisms using canary tokens, positive controls, and a 16-mutant fault-injection matrix to examine whether different implementation faults can result in cross-tenant data exposure.
+\item \textbf{Engineering and Maintainability Evaluation:} We examine practical aspects of the implementation, including developer experience, zero-downtime schema migrations, and support workflows for tenant diagnostics.
+\item \textbf{Performance Evaluation:} We measure the runtime overhead of database-level RLS across different workloads on PostgreSQL 17, using paired benchmark runs and equivalence testing to assess its practical impact.
 \end{enumerate}
 
-\textit{Roadmap:} Section \ref{sec:background} outlines related multi-tenancy literature. Section \ref{sec:threat_model} establishes our threat model, formal execution semantics, and non-interference proof. Section \ref{sec:system_design} describes the NexusOps engine architecture. Section \ref{sec:guardrails} explains our automated verification guardrails. Sections \ref{sec:sec_eval} and \ref{sec:evaluation} report empirical security validations and benchmark measurements. Section \ref{sec:devex} shares practical case-study reflections. Finally, Sections \ref{sec:threats}, \ref{sec:limitations}, and \ref{sec:conclusion} analyze validity threats, future extensions, and concluding remarks.
+\subsection{Organization of the Paper}
+The remainder of this paper is organized as follows. Section II discusses existing approaches to multi-tenancy and database security. Section III formalizes the threat model, operational semantics, and security properties. Section IV details the system architecture and dual-layer implementation. Section V introduces the automated guardrails. Section VI presents the empirical security evaluation. Section VII evaluates runtime performance. Section VIII examines developer experience. Section IX discusses threats to validity. Section X discusses limitations and future work, and Section XI concludes the paper.
 
 \section{Background and Related Work}
 \label{sec:background}
 
-\subsection{Architectural Strategies for Multi-Tenancy}
-When designing multi-tenant data storage, one must balance operational isolation against hardware consolidation. Chong et al. \cite{chong2006} and Bezemer and Zaidman \cite{bezemer2010} mapped this landscape into three core patterns:
-\begin{enumerate}
-\item \textit{Database-per-Tenant (Silo):} Every subscriber is provisioned a dedicated database instance or virtual server. This architecture provides strong hardware boundaries, dedicated backups, and simple regional compliance. However, hosting thousands of separate DBMS instances for cost-conscious SME subscribers creates overwhelming wastage of CPU, memory, and connection pools \cite{kabbedijk2015}.
-\item \textit{Schema-per-Tenant (Bridge):} Tenants share a common database engine but communicate with separate SQL schemas (namespaces). While memory sharing improves, running schema migrations across thousands of namespaces introduces severe deployment bottlenecks, DDL locks, and connection bloat \cite{aulbach2008}.
-\item \textit{Shared-Table Pooling:} All subscriber records reside in shared relational tables, distinguished by a foreign key or discriminator column such as \texttt{tenant\_id}.
-\end{enumerate}
+Multi-tenancy has been explored extensively in database research and enterprise software engineering. As cloud computing became widely adopted, researchers and practitioners investigated various techniques for sharing computing and database resources among multiple organizations \cite{armbrust2010, bezemer2010}.
 
-Early research by Jacobs and Aulbach \cite{jacobs2007} and Aulbach et al. \cite{aulbach2008} pointed out that shared tables achieve maximum hardware consolidation, yielding the highest number of active tenants per gigabyte of RAM. Commercial engines adopted varied implementations: Salesforce built metadata-driven query rewriting into Force.com \cite{weissman2009}, Guo et al. \cite{guo2007} and Krebs et al. \cite{krebs2012} explored multi-dimensional isolation across data, throughput, and maintenance lifecycles, while Schiller et al. \cite{schiller2011}, Narasayya and Chaudhuri \cite{narasayya2022}, and Curino et al. \cite{curino2010} analyzed native database primitives, enterprise cloud storage services, and predictable execution latencies. Recent architectural guidance from cloud providers \cite{aws2020} recommends combining application logic with database-level security policies rather than relying exclusively on programmer vigilance. Table \ref{tab:comparison} compares existing literature with the dual-layer model implemented in NexusOps.
+\subsection{Architectural Strategies for Multi-Tenancy}
+Early work on multi-tenant systems classified database architectures into three primary models: database-per-tenant, schema-per-tenant, and shared-schema approaches \cite{chong2006, kabbedijk2015}.
+
+The database-per-tenant model assigns a separate physical or logical database to each customer. This approach provides strong isolation between tenants and simplifies per-customer backup, migration, and resource accounting. However, it requires maintaining numerous database instances or files, which increases infrastructure costs and administrative effort as the number of organizations grows \cite{jacobs2007}.
+
+The schema-per-tenant model groups multiple customers within a single database instance while assigning each organization its own namespace or schema. This reduces instance-level overhead compared with the database-per-tenant approach. Nevertheless, maintaining hundreds or thousands of schemas can strain database management systems during schema migrations, catalog lookups, and metadata operations \cite{weissman2009}.
+
+The shared-schema model places records from all organizations into a single set of tables, using a discriminator column such as \texttt{tenant\_id} to associate each row with its owning tenant \cite{aulbach2008, guo2007}. This model offers high resource density and lowers hosting costs, making it a common choice for enterprise SaaS applications \cite{krebs2012, schiller2011}. However, because tenant records reside alongside one another, preventing unauthorized access across tenant boundaries becomes the primary responsibility of application code and database queries \cite{narasayya2022}.
 
 \begin{table*}[t]
 \renewcommand{\arraystretch}{0.95}
@@ -156,151 +164,124 @@ Supabase / PostgREST & None & Direct RLS & JWT claims & None & None & None & Dir
 \end{table*}
 
 \subsection{Database-Enforced Row Filtering Mechanics}
-Tuple filtering originated in query modification techniques pioneered by Stonebraker and Wong in the early INGRES project \cite{stonebraker1974}, which subsequently inspired commercial systems such as Oracle Virtual Private Database (VPD). PostgreSQL introduced declarative Row-Level Security in version 9.5 and continued developing executor and planner integration through PostgreSQL 17 \cite{postgresql17docs, postgresql17notes}.
+PostgreSQL introduced declarative Row-Level Security (RLS) in version 9.5. Its integration with the query planner was further refined in PostgreSQL 17 \cite{postgresql17docs, postgresql17notes}. When RLS is enabled on a table, the database rewrites incoming queries to include the conditions specified by the applicable security policy. This ensures that the policy condition is evaluated as part of the query execution plan, regardless of whether the original query included an explicit tenant filter.
 
-In PostgreSQL, an RLS policy is a persistent boolean filter bound to a physical table. When queries execute against a secured relation, the query planner embeds policy expressions directly into the query tree:
-\begin{itemize}
-\item \textit{Read Queries (\texttt{USING}):} Evaluated during \texttt{SELECT}, \texttt{UPDATE}, and \texttt{DELETE} operations. For all rows where the expression does not evaluate to true, the row is silently omitted from the result set.
-\item \textit{Write Queries (\texttt{WITH CHECK}):} Evaluated during \texttt{INSERT} and \texttt{UPDATE}. If a proposed row violates the policy expression, the engine aborts the statement with an immediate security violation error.
-\end{itemize}
+The query-modification approach used by RLS builds on concepts established by Stonebraker and Wong in early relational systems, where access permissions were enforced by rewriting queries prior to execution \cite{stonebraker1974}. Modern database systems implement similar capabilities, including Oracle Virtual Private Database (VPD), Microsoft SQL Server Row-Level Security, and MySQL view-based filtering. These mechanisms allow security rules to be enforced within the database engine rather than relying entirely on application software.
 
-Meanwhile, PostgreSQL's security model includes built-in administrative exemptions that can unwittingly tear up protection if neglected:
-\begin{enumerate}
-\item Superusers and accounts carrying the \texttt{BYPASSRLS} attribute bypass all row filters unconditionally.
-\item Table owners do not pay attention to RLS by default unless the schema author explicitly executes \texttt{ALTER TABLE ... FORCE ROW LEVEL SECURITY}.
-\item Policies can be modified or dropped directly by roles holding DDL privileges.
-\item Restrictive policies combine with boolean \texttt{AND}, but the database engine requires at least one baseline permissive rule to grant row visibility; without a permissive policy, queries always return empty sets.
-\end{enumerate}
-Given these restrictions, row security protects tenants only when application services connect under an unprivileged database role lacking superuser and bypass privileges \cite{postgresql17docs}, backed by automated schema guardrails ensuring policies cannot be breached.
+In application development, multi-tenant filtering is often handled at the Object-Relational Mapping (ORM) layer. Frameworks such as Hibernate provide features that automatically append tenant conditions to generated SQL statements \cite{hibernate2025}. While this approach simplifies application code, it does not apply to queries that bypass the ORM layer, such as native SQL statements, reporting queries, or direct database connections.
 
 \subsection{Separating Multi-Tenancy from Role-Based Permissions}
-Tenant scoping and authorization serve distinct operational goals. Tenancy determines data ownership (which organization owns a particular data entity), whereas Role-Based Access Control (RBAC) determines what specific actions may be performed within that workspace by a particular authenticated user \cite{sandhu1996, ferraiolo2001}. NexusOps implements RBAC permissions independently of tenant isolation. In the event of a software bug mistakenly granting administrative rights to an entry-level clerk, tenant-tier isolation ensures that all subsequent queries remain strictly constrained within that user's organizational boundary.
+Multi-tenant architectures generally distinguish between two aspects of access control: tenant isolation and user authorization \cite{sandhu1996, ferraiolo2001}.
+
+Tenant isolation determines which organization's data an operation is permitted to access. It establishes a boundary between customers and is typically evaluated before individual user permissions are considered. In NexusOps, tenant identity is represented by an immutable identifier, \texttt{tenant\_id}, which remains associated with the request throughout its execution.
+
+User authorization, by contrast, determines what actions an authenticated user is permitted to perform within their organization. NexusOps manages user permissions through Role-Based Access Control (RBAC), using roles such as \texttt{OWNER}, \texttt{ADMIN}, \texttt{MEMBER}, and \texttt{VIEWER}. These roles govern application-level features, such as creating invoices or viewing reports, but they do not alter the tenant boundary itself.
 
 \subsection{Research Challenges Addressed}
-Although ORM filters and database RLS are described in technical manuals, prior studies \cite{aulbach2008, bezemer2010, kabbedijk2015, schiller2011, narasayya2022} leave critical working issues unresolved:
-\begin{enumerate}
-\item How is it possible to safely bind session information in a multi-tenant application to pooled connections without risking state bleeding across recycled sockets?
-\item Exactly what types of software bugs, schema drift, role misconfigurations, and migration oversights are caught by ORM discriminators versus database RLS?
-\item What is the true execution overhead of database-tier policy evaluation when queries involve complex relational graph joins, heavy-tailed tenant size skew, and connection pool saturation?
-\end{enumerate}
+Prior research has addressed shared-schema mapping \cite{aulbach2008}, automated query transformations \cite{stonebraker1974}, and administrative overhead in multi-tenant environments \cite{bezemer2010, kabbedijk2015}. However, relatively few studies have examined the operational interaction between application-tier ORM filtering and database-level Row-Level Security under high-concurrency conditions.
+
+In particular, the behavior of connection pools during repeated tenant context transitions requires careful attention. When physical database connections are reused across different requests, session state must be cleared reliably to prevent tenant information from carrying over. In addition, the performance overhead of evaluating database security policies on modern relational engines warrants empirical evaluation. This paper addresses these questions through an evaluation of NexusOps on PostgreSQL 17.
 
 \section{Threat Model, Formal Semantics and Security Invariants}
 \label{sec:threat_model}
 
-\subsection{Attacker Capabilities and Trusted Computing Base}
-We consider a multi-tenant cloud environment where an active adversary $\mathcal{A}$ attempts to breach customer boundaries under the following operational assumptions:
-\begin{itemize}
-\item \textit{Established Tenant Footprint:} The attacker has an active, legitimate paying account in workspace Tenant $A$. They can issue arbitrary REST requests, manipulate client-side cookies or localStorage state, and inject forged HTTP headers such as \texttt{X-Tenant-ID}.
-\item \textit{Target UUID Knowledge:} The attacker knows or enumerates target UUIDs for victim Tenant $B$, acquired through public invoices, shared links, or sequential probe scanning.
-\item \textit{High-Frequency Concurrency:} The attacker can overrun the system with concurrent requests, attempting to trigger race conditions, thread-local context bleed, or connection pool cross-contamination.
-\item \textit{Software Defect Exploitation:} The attacker actively probes for internal coding errors, such as entities missing ORM tenant filters, unmapped analytical queries, or direct JDBC endpoints.
-\item \textit{Trusted Computing Base (TCB):} The TCB consists of the PostgreSQL database engine, the host operating system kernel, the perimeter query compilation layer, and the asymmetric JWT signing key (RS256).
-\end{itemize}
+To evaluate the security of the dual-layer architecture, we define the threat model, the operational semantics governing query execution, and the formal properties expected of the system.
 
-Dual-layer isolation addresses a specific threat class: software logic omissions and tenant identification mistakes in application code. However, both layers share a common root of trust: the active session setting (\texttt{app.tenant\_id}). If an attacker succeeds in executing stacked SQL injection, they could invoke \texttt{SELECT set\_config('app.tenant\_id', ...)} directly. Consequently, database RLS does not excuse poor perimeter hygiene. NexusOps enforces parameterized query compilation and extended query mode across all inputs.
+\subsection{Attacker Capabilities and Trusted Computing Base}
+We consider an adversary $\mathcal{A}$ whose objective is to observe, modify, or delete data belonging to a tenant other than their own. The adversary is assumed to have legitimate access to the platform as a registered user of tenant $T_A$ and may attempt to access records belonging to tenant $T_B$, where $T_A \neq T_B$.
+
+The adversary may interact with the system through several vectors:
+\begin{enumerate}
+\item \textbf{API-Level Manipulation:} The adversary may send manipulated HTTP requests, including altered URL paths, sequential identifier guessing (Insecure Direct Object Reference or IDOR), and forged HTTP headers such as \texttt{X-Tenant-ID} or \texttt{X-Tenant-Slug}.
+\item \textbf{Application Implementation Faults:} The adversary may exploit application-level mistakes, such as missing ORM tenant annotations, unparameterized native SQL queries, or repository methods that omit tenant filters.
+\item \textbf{Connection-State Bleeding:} The adversary may attempt to benefit from state retention in pooled database connections, where a connection previously used by tenant $T_B$ is reused for a request from tenant $T_A$ without being properly sanitized.
+\end{enumerate}
+
+The Trusted Computing Base (TCB) consists of the PostgreSQL database engine, the host operating system kernel, the perimeter query-compilation layer, and the asymmetric JWT signing key used for RS256 authentication.
+
+The dual-layer isolation mechanism is designed to protect against tenant-identification errors and missing access conditions in application code. However, both enforcement layers depend on a shared source of tenant context: the active database session setting, \texttt{app.tenant\_id}.
+
+This dependency is important. If an attacker successfully exploits stacked SQL injection, they may attempt to execute \texttt{set\_config('app.tenant\_id', ...)} directly. Therefore, enabling RLS does not remove the need for secure input handling and query construction. NexusOps uses parameterized query compilation and extended query mode to reduce this risk.
 
 \subsection{Small-Step Operational Semantics}
-To formalize how relational execution operates under dual protection, we specify small-step operational semantics. Let $\mathcal{T} = \{t_1, t_2, \dots, t_n\}$ represent the universe of registered tenant IDs, where $\emptyset$ denotes an unauthenticated or missing session. Database state $\Sigma$ maps relation $T$ to its stored row collection $\sigma(T)$. Every row $r \in \sigma(T)$ carries an immutable attribute $r.\texttt{tenant\_id} \in \mathcal{T}$.
+To describe how queries behave under the proposed dual-layer isolation model, we define a small-step operational semantics.
 
-A physical connection state is modeled as $C = (\text{id}, \tau, m)$, tracking the physical connection handle $\text{id}$, the bound tenant context $\tau \in \mathcal{T} \cup \{\emptyset\}$, and transaction mode $m \in \{\text{auto}, \text{tx}\}$.
+Let $\mathcal{T} = \{t_1, t_2, \dots, t_n\}$ represent the set of registered tenant identifiers. The empty value, $\emptyset$, represents a missing or unauthenticated tenant context.
 
-Executing query $\mathcal{Q}$ transitions the database state:
+The database state, denoted by $\sigma$, maps each relation $T$ to its stored collection of rows, written as $\sigma(T)$. Every row $r$ contains an immutable tenant identifier:
 \begin{equation}
-\langle \mathcal{Q}, \sigma, \tau \rangle \Downarrow \langle \mathcal{R}, \sigma' \rangle
-\end{equation}
-where $\sigma$ and $\tau$ provide the incoming snapshot and tenant context, returning result set $\mathcal{R}$ and updated state $\sigma'$.
-
-Under dual-layer enforcement, the effective relational visibility operator $\Pi_{\tau}$ applied to any table $T$ filters tuples at the storage engine:
-\begin{equation}
-\Pi_{\tau}(\sigma(T)) = \{ r \in \sigma(T) \mid r.\texttt{tenant\_id} = \tau \land \tau \neq \emptyset \}
+r.\texttt{tenant\_id} \in \mathcal{T}
 \end{equation}
 
-For an authenticated read query $\mathcal{Q}_{\text{read}}(T, \phi)$ evaluating user filter $\phi$:
+The state of a physical database connection is represented as $C = (\mathit{id}, \tau, m)$, where $\mathit{id}$ identifies the physical connection, $\tau \in \mathcal{T} \cup \{\emptyset\}$ represents the tenant context currently associated with it, and $m \in \{\mathit{auto}, \mathit{tx}\}$ indicates whether the connection is operating in automatic-commit or transaction mode.
+
+Executing a query $\mathcal{Q}$ produces a result set $\mathcal{R}$ and may update the database state. This transition is expressed as:
 \begin{equation}
-\frac{\tau \in \mathcal{T} \quad \mathcal{R} = \{ r \in \Pi_{\tau}(\sigma(T)) \mid \phi(r) \}}{\langle \mathcal{Q}_{\text{read}}(T, \phi), \sigma, \tau \rangle \Downarrow \langle \mathcal{R}, \sigma \rangle}
+\langle \mathcal{Q}, \sigma, \tau \rangle \to \langle \mathcal{R}, \sigma' \rangle \label{eq:exec}
 \end{equation}
 
-If an unauthenticated request attempts a read ($\tau = \emptyset$), the engine immediately resolves to empty:
+Under dual-layer enforcement, the database applies a tenant-visibility operator $\Pi_\tau$ to the stored relation. This operator retains only those rows whose tenant identifier matches the active context:
 \begin{equation}
-\frac{\tau = \emptyset}{\langle \mathcal{Q}_{\text{read}}(T, \phi), \sigma, \emptyset \rangle \Downarrow \langle \emptyset, \sigma \rangle}
+\Pi_{\tau}(\sigma(T)) = \{ r \in \sigma(T) \mid r.\texttt{tenant\_id} = \tau \land \tau \neq \emptyset \} \label{eq:filter}
 \end{equation}
 
-For a write operation $\mathcal{Q}_{\text{write}}(T, r)$:
+For an authenticated read query $\mathcal{Q}_{\mathit{read}}(T, \phi)$, where $\phi$ represents the application's query condition, the visible result set is:
 \begin{equation}
-\frac{\tau \in \mathcal{T} \quad r.\texttt{tenant\_id} = \tau \quad \sigma' = \sigma[T \mapsto \sigma(T) \cup \{r\}]}{\langle \mathcal{Q}_{\text{write}}(T, r), \sigma, \tau \rangle \Downarrow \langle \{r\}, \sigma' \rangle}
+\mathcal{R} = \{ r \in \Pi_{\tau}(\sigma(T)) \mid \phi(r) \}
+\end{equation}
+The corresponding execution rule is:
+\begin{equation}
+\frac{\tau \in \mathcal{T} \quad \mathcal{R} = \{ r \in \Pi_{\tau}(\sigma(T)) \mid \phi(r) \}}{\langle \mathcal{Q}_{\mathit{read}}(T, \phi), \sigma, \tau \rangle \to \langle \mathcal{R}, \sigma \rangle}
 \end{equation}
 
-Whenever an insertion attempts to write a record belonging to a different tenant ($r.\texttt{tenant\_id} \neq \tau$), PostgreSQL aborts:
+If a read query is executed without a valid tenant context, the system returns an empty result set:
 \begin{equation}
-\frac{\tau \in \mathcal{T} \quad r.\texttt{tenant\_id} \neq \tau}{\langle \mathcal{Q}_{\text{write}}(T, r), \sigma, \tau \rangle \Downarrow \langle \text{error}(\texttt{42501}), \sigma \rangle}
+\frac{\tau = \emptyset}{\langle \mathcal{Q}_{\mathit{read}}(T, \phi), \sigma, \emptyset \rangle \to \langle \emptyset, \sigma \rangle}
 \end{equation}
-raising error code \texttt{42501} (\textit{insufficient\_privilege}).
+
+Write operations follow a similar rule. For an operation $\mathcal{Q}_{\mathit{write}}(T, r)$, a record can be inserted only when its tenant identifier matches the active tenant context: $r.\texttt{tenant\_id} = \tau$. In that case, the database state is updated as $\sigma' = \sigma[T \mapsto \sigma(T) \cup \{r\}]$:
+\begin{equation}
+\frac{\tau \in \mathcal{T} \quad r.\texttt{tenant\_id} = \tau \quad \sigma' = \sigma[T \mapsto \sigma(T) \cup \{r\}]}{\langle \mathcal{Q}_{\mathit{write}}(T, r), \sigma, \tau \rangle \to \langle \{r\}, \sigma' \rangle}
+\end{equation}
+
+If the proposed record belongs to a different tenant, PostgreSQL rejects the operation:
+\begin{equation}
+\frac{\tau \in \mathcal{T} \quad r.\texttt{tenant\_id} \neq \tau}{\langle \mathcal{Q}_{\mathit{write}}(T, r), \sigma, \tau \rangle \to \langle \text{error}(42501), \sigma \rangle}
+\end{equation}
+Here, error code \texttt{42501} indicates insufficient privilege.
 
 \subsection{Formal Security Properties}
-Building on Goguen and Meseguer's non-interference model \cite{goguen1982}, our architecture enforces five core operational invariants:
+The architecture is designed to maintain five core security properties, formalized under the operational semantics:
 
-\begin{property}[Strict Non-Interference for Tenant Contexts]
-Any query $\mathcal{Q}$ run under authenticated tenant context $\tau = t_i \in \mathcal{T}$ can return only tuples belonging to $t_i$'s private domain:
+\noindent \textbf{Property 1: Strict Non-Interference Between Tenant Contexts.} For any two distinct tenant identifiers $t_A, t_B \in \mathcal{T}$ ($t_A \neq t_B$), and any query $\mathcal{Q}$ executed under tenant context $t_A$, the result set $\mathcal{R}$ must satisfy:
 \begin{equation}
-\mathcal{R}(\mathcal{Q}, t_i) \subseteq \mathcal{D}(t_i) \quad \text{and} \quad \mathcal{R}(\mathcal{Q}, t_i) \cap \mathcal{D}(t_j) = \emptyset, \quad \forall j \neq i
+\forall r \in \mathcal{R}, \quad r.\texttt{tenant\_id} \neq t_B
 \end{equation}
-where $\mathcal{D}(t)$ represents all records belonging to tenant $t$. Administrative operations run outside $\mathcal{T}$ over dedicated connections writing immutable audit entries.
-\end{property}
+A query executed under context $t_A$ cannot return records belonging to tenant $t_B$ \cite{goguen1982}.
 
-\begin{property}[Fail-Closed Default]
-If a query executes without a valid tenant context ($\tau = \emptyset$), the resulting dataset is guaranteed to be empty:
+\noindent \textbf{Property 2: Fail-Closed Default.} If a database query executes when the session context is uninitialized ($\tau = \emptyset$), the visibility operator evaluates to the empty set:
 \begin{equation}
-\mathcal{R}(\mathcal{Q}, \tau = \emptyset) = \emptyset
+\Pi_{\emptyset}(\sigma(T)) = \emptyset
 \end{equation}
-\end{property}
+No tenant data is visible unless an authenticated context has been explicitly established.
 
-\begin{property}[Connection Sanitization Invariant]
-When connection pooler $\mathcal{C}$ assigns an idle connection $C$ to request $k+1$, its active tenant variable $\tau_{k+1}$ reflects only request $k+1$'s authenticated identity, showing zero residual state from prior transaction $\tau_k$:
+\noindent \textbf{Property 3: Connection Sanitization Invariant.} When a physical connection $C_i$ is released back to the connection pool at the end of a transaction, its associated tenant context is purged:
 \begin{equation}
-\tau_{k+1} = \text{context}(\text{req}_{k+1}) \quad (\text{independent of } \tau_k)
+\tau(C_i) \to \emptyset
 \end{equation}
-\end{property}
+A subsequent transaction borrowing connection $C_i$ begins with an uninitialized context ($\tau = \emptyset$) until explicitly rebound.
 
-\begin{property}[Audit Trail Immutability]
-As long as the database superuser is protected, any attempt to modify or delete historical audit entries $a \in \mathcal{D}_{\text{audit}}(\sigma)$ via \texttt{UPDATE}, \texttt{DELETE}, or \texttt{TRUNCATE} is rejected:
+\noindent \textbf{Property 4: Audit Trail Immutability.} Every security-relevant event produces an audit record $a = (\mathit{ts}, \tau, u, \mathit{act}, \mathit{res})$ in table $\sigma(\mathit{Audit})$. The system enforces an append-only rule:
 \begin{equation}
-\forall a \in \mathcal{D}_{\text{audit}}(\sigma): \quad \text{val}_{\sigma'}(a) = \text{val}_{\sigma}(a)
+\forall \sigma \to \sigma', \quad \sigma(\mathit{Audit}) \subseteq \sigma'(\mathit{Audit})
 \end{equation}
-\end{property}
+Audit records cannot be modified or deleted through application roles.
 
-\begin{property}[Uniform Anti-Enumeration Responses]
-When an authenticated user from tenant $t_i$ probes an existing record $r \in \mathcal{D}(t_j)$ ($i \neq j$), the application responds with HTTP 404 (Not Found) rather than HTTP 403 (Forbidden), giving the attacker no clue that the resource actually exists.
-\end{property}
-
-\subsection{Inductive Proof of Non-Interference under Connection Reuse}
-\begin{theorem}
-For any request sequence $\mathcal{S} = \langle \text{req}_1, \dots, \text{req}_m \rangle$ served over a shared connection pool $\mathcal{C} = \{C_1, \dots, C_k\}$, the NexusOps sanitization protocol guarantees strict non-interference (Property 1) for every request $\text{req}_m$, completely independent of prior socket assignments.
-\end{theorem}
-
-\begin{proof}
-We proceed by mathematical induction over the total request sequence length $m$.
-
-\textit{Base Case ($m = 1$):} Sockets in pool $\mathcal{C}$ initialize with an empty context $\tau = \emptyset$. When dispatching $\text{req}_1$, the platform transaction manager sets $\text{autoCommit} = \text{false}$ and invokes our connection interceptor: \texttt{SELECT set\_config('app.tenant\_id', $t_1$, true)}. Because $\text{is\_local} = \text{true}$, PostgreSQL scopes $t_1$ strictly to the open transaction block \cite{postgresql17docs}. Equation (3) bounds tuple visibility to $\Pi_{\tau}(\sigma(T)) = \{r \in \sigma(T) \mid r.\texttt{tenant\_id} = t_1\}$. Hence, $\mathcal{R}(\mathcal{Q}, t_1) \subseteq \mathcal{D}(t_1)$ and $\mathcal{R}(\mathcal{Q}, t_1) \cap \mathcal{D}(t_j) = \emptyset$ for all $j \neq 1$. Property 1 holds for $m = 1$.
-
-\textit{Inductive Hypothesis:} Assume that for all sequences up to length $k$, Property 1 holds for every executed request.
-
-\textit{Inductive Step ($m = k + 1$):} Let $\text{req}_{k+1}$ arrive under tenant identity $t_{k+1}$ and check out connection $C_j \in \mathcal{C}$, which previously executed request $\text{req}_k$ under tenant $t_k$. When $\text{req}_k$ completed, Spring issued a database \texttt{COMMIT} or \texttt{ROLLBACK}. By PostgreSQL engine design \cite{postgresql17docs}, closing a transaction immediately purges all transaction-scoped parameters, resetting $C_j.\tau$ to $\emptyset$ prior to pool return. When checkout occurs for $\text{req}_{k+1}$, a fresh transaction begins ($\text{autoCommit} = \text{false}$), immediately setting \texttt{SELECT set\_config('app.tenant\_id', $t_{k+1}$, true)}. The active setting transitions cleanly to $\tau = t_{k+1}$ without state residue from $t_k$. Applying Equation (3), returned rows are restricted to $\Pi_{t_{k+1}}(\sigma(T)) \subseteq \mathcal{D}(t_{k+1})$. If $\text{req}_{k+1}$ is unauthenticated, no setting is provided ($\tau = \emptyset$), and Equation (4) yields $\emptyset$.
-
-Thus, physical connection reuse cannot leak cross-tenant state across sequential transactions.
-\end{proof}
-
-\subsection{Side-Channel Vectors and Practical Safeguards}
-Direct query leaks represent only the most obvious threat surface. In multi-tenant environments, side-channel inference vectors often pose equal danger.
-
-Take unique constraints. PostgreSQL checks uniqueness on underlying B-tree indexes before evaluating row security policies. If an adversary attempts to register a user with an email already taken by a rival tenant, the resulting unique key violation confirms that the rival exists and holds that specific record. NexusOps eliminates this enumeration vector by anchoring every unique constraint on composite keys starting with \texttt{tenant\_id} (e.g., \texttt{UNIQUE(tenant\_id, email)}). Uniqueness assertions remain strictly local to each organization.
-
-Relational foreign keys create a similar trap. If a table links to parent entities through plain foreign keys, cascading operations or insert attempts can inadvertently probe parent row existence. We close this gap by mandating composite foreign keys that replicate the tenant discriminator across all child tables.
-
-Timing attacks present another subtle vector: if querying a non-existent primary key returns in 0.1 ms while an existing key takes longer due to disk reads, an attacker can time API responses to deduce valid IDs. Because our queries execute over composite B-tree indexes where \texttt{tenant\_id} anchors the leading key, lookups follow identical $\mathcal{O}(\log N)$ page-traversal depths regardless of tenant identity.
-
-Finally, application-level caching introduces its own headaches. Storing plain entity keys in Redis (e.g., \texttt{user:101}) quickly causes cross-tenant collisions. Every cache entry in NexusOps follows strict namespacing: \texttt{tenant:\{tenant\_id\}:<entity>:<id>}, preventing cache-level data bleeding.
-
-Table \ref{tab:property_mapping} maps each formal property to its corresponding empirical verification suite.
+\noindent \textbf{Property 5: Uniform Anti-Enumeration Responses.} When a user belonging to tenant $t_A$ requests an entity with identifier $e_{\mathit{id}}$ that belongs to tenant $t_B$, the application responds with:
+\begin{equation}
+\text{Response}(e_{\mathit{id}}) = \text{HTTP 404 Not Found}
+\end{equation}
+The system returns identical responses whether an entity exists in another tenant or does not exist at all, preventing IDOR enumeration attacks.
 
 \begin{table}[t]
 \renewcommand{\arraystretch}{0.95}
@@ -324,13 +305,64 @@ Prop. 5 (Anti-Enumeration) & \texttt{CrossTenantApiIT} (7 HTTP suites) & ID-bear
 }
 \end{table}
 
+\subsection{Inductive Proof of Non-Interference under Connection Reuse}
+We provide an inductive proof to examine non-interference when a single physical database connection is reused across a sequence of $m$ transactions.
+
+\noindent \textbf{Theorem 1:} For any sequence of $m$ transactions $\langle tx_1, tx_2, \dots, tx_m \rangle$ executed sequentially on physical connection $C$, where each transaction $tx_i$ is associated with tenant $\tau_i \in \mathcal{T}$, no transaction $tx_k$ ($1 \le k \le m$) can observe records belonging to tenant $\tau_j$ ($\tau_j \neq \tau_k$) for any $j \neq k$.
+
+\noindent \textit{Proof by Induction on $m$:}
+
+\textbf{Base Case ($m = 1$):} Transaction $tx_1$ begins on connection $C$ with $\tau = \emptyset$. The transaction manager sets \texttt{autoCommit = false} and executes:
+\begin{lstlisting}[language=SQL]
+SELECT set_config('app.tenant_id', t1, true);
+\end{lstlisting}
+Because \texttt{is\_local = true}, the setting is scoped strictly to $tx_1$. PostgreSQL applies the RLS visibility operator:
+\begin{equation}
+\Pi_{\tau_1}(\sigma(T)) = \{ r \in \sigma(T) \mid r.\texttt{tenant\_id} = \tau_1 \}
+\end{equation}
+No record with $r.\texttt{tenant\_id} \neq \tau_1$ satisfies the policy. At transaction completion (\texttt{COMMIT} or \texttt{ROLLBACK}), PostgreSQL clears all transaction-local settings. The connection state returns to $\tau = \emptyset$. Non-interference holds for $m = 1$.
+
+\textbf{Inductive Hypothesis:} Assume Theorem 1 holds for any sequence of $k$ transactions ($m = k$). That is, no transaction $tx_i$ ($1 \le i \le k$) observes records belonging to any other tenant, and at the end of transaction $tx_k$, the connection state satisfies $\tau(C) = \emptyset$.
+
+\textbf{Inductive Step ($m = k + 1$):} Transaction $tx_{k+1}$ begins on connection $C$. By the induction hypothesis, connection $C$ arrives from transaction $tx_k$ with $\tau(C) = \emptyset$. If $tx_{k+1}$ executes queries without establishing context, Property 2 applies: $\Pi_\emptyset(\sigma(T)) = \emptyset$, and zero rows are returned. When $tx_{k+1}$ establishes context $\tau_{k+1}$, the interceptor executes:
+\begin{lstlisting}[language=SQL]
+SELECT set_config('app.tenant_id', tk+1, true);
+\end{lstlisting}
+The RLS visibility operator becomes $\Pi_{\tau_{k+1}}(\sigma(T))$. For any record $r$ belonging to a previous tenant $\tau_j$ ($j \le k$), since $\tau_j \neq \tau_{k+1}$, the policy predicate evaluates to false. Upon completion of $tx_{k+1}$, the transaction boundary purges the setting, restoring $\tau(C) = \emptyset$. By mathematical induction, Theorem 1 holds for all $m \ge 1$. $\blacksquare$
+
+\subsection{Side-Channel Vectors and Practical Safeguards}
+In shared-schema databases, side-channel leakage can occur even when direct row access is prevented. NexusOps addresses three practical side channels:
+\begin{enumerate}
+\item \textbf{Unique Constraint Enumeration:} If a column such as \texttt{email} has a global uniqueness constraint, an attacker in tenant $T_A$ could determine whether an email exists in tenant $T_B$ by attempting to insert a duplicate record and observing a unique-key violation. NexusOps scopes all uniqueness constraints to include the tenant identifier:
+\begin{lstlisting}[language=SQL]
+UNIQUE (tenant_id, email)
+\end{lstlisting}
+Duplicate values can exist across distinct tenants without conflict, preventing cross-tenant existence probing.
+\item \textbf{Shared Cache Bleeding:} When caching query results in Redis, cache keys must include the tenant identifier. NexusOps prefixes all cache keys with the tenant context:
+\begin{lstlisting}
+tenant:{tenant_id}:{entity}:{id}
+\end{lstlisting}
+This prevents cache hits from crossing tenant boundaries.
+\item \textbf{Response Timing Consistency:} Error responses for nonexistent entities and forbidden cross-tenant entities both return HTTP 404 with identical payloads, avoiding timing differentials that could reveal foreign entity existence.
+\end{enumerate}
+
+\section{System Architecture and Implementation}
+\label{sec:architecture}
+
+NexusOps is implemented as a modular monolithic application using Spring Boot 4 and Java 25. PostgreSQL 17 is used for relational data storage, while Redis 7 handles caching and token-revocation data (Fig. \ref{fig:arch}).
+
+The decision to use a modular monolith instead of a distributed microservices architecture was deliberate. A microservices-based design can introduce additional complexity through distributed transactions, two-phase commit (2PC), network communication, and synchronization across multiple databases \cite{dragoni2017}. By keeping the functional domains within a single application boundary, NexusOps can maintain ACID transactions across related business operations and append-only audit records without requiring distributed coordination \cite{richardson2018, newman2019}.
+
+The application is divided into separate Java packages according to their responsibilities. These include Identity and Tenancy, Authorization and RBAC \cite{sandhu1996}, Directory Services (Users, Organizations, and Items), and the main operational modules, such as CRM, Pipelines, Invoices, and Ledgers. Spring Modulith is used to maintain these module boundaries. It checks package-level dependencies and identifies violations of the defined internal structure during the build process.
+
+All 16 domain tables containing tenant-owned data follow a consistent RLS configuration, as illustrated in Fig. \ref{fig:schema_er}. A shared security kernel provides the tenant context, tenant-aware data source, common entity mapping, database-role verification, and scoped context propagation used by the application modules.
+
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.95\columnwidth]{figures/fig1_architecture.pdf}
 \caption{Modular monolith architecture of NexusOps. Functional domain modules communicate through Spring Modulith boundaries and access PostgreSQL via the shared \texttt{TenantAwareDataSource}.}
 \label{fig:arch}
 \end{figure}
-
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.95\textwidth]{figures/fig2_schema_er.pdf}
@@ -338,33 +370,33 @@ Prop. 5 (Anti-Enumeration) & \texttt{CrossTenantApiIT} (7 HTTP suites) & ID-bear
 \label{fig:schema_er}
 \end{figure*}
 
-\section{System Architecture and Implementation}
-\label{sec:system_design}
-
-\subsection{Modular Monolithic Core}
-We structured NexusOps as a modular monolith running on Spring Boot 4 and Java 25, paired with PostgreSQL 17 for relational storage and Redis 7 for caching (Fig. \ref{fig:arch}). Choosing a modular monolith over distributed microservices was an intentional architectural trade-off. Microservices force teams into distributed 2PC sagas, network serialization latency, and complex multi-database synchronization \cite{dragoni2017}. In contrast, keeping functional domains inside a single process boundary \cite{richardson2018, newman2019} lets us enforce atomic ACID transactions across domain state changes and append-only audit entries without distributed coordination overhead.
-
-Domain modules are separated into explicit Java packages: Identity \& Tenancy, Authorization \& RBAC \cite{sandhu1996}, Directory Services (Users, Organizations, Items), and core operational modules (CRM, Pipelines, Invoices, Ledgers). Spring Modulith verifies these package boundaries at compile time, rejecting builds whenever a class breaches internal package encapsulation. All 16 domain tables that store tenant data share uniform RLS policies (Fig. \ref{fig:schema_er}).
-
 \subsection{Token Authentication and Context Extraction}
-Authentication issues a 15-minute JSON Web Token (JWT) \cite{jones2015} signed via RS256 asymmetric cryptography, alongside an \texttt{httpOnly} rotating refresh token aligned with OAuth RFC 9700 recommendations \cite{lodderstedt2025}. The active tenant identifier is embedded directly inside a private \texttt{tid} claim. To handle immediate account bans or subscription cancellations, our API gateway cross-checks token IDs against an in-memory Redis revocation set during sensitive state mutations.
+NexusOps uses JSON Web Tokens (JWTs) for request authentication. Each access token has a validity period of 15 minutes and is signed using RS256 asymmetric cryptography \cite{jones2015}. The system also issues an HTTP-only rotating refresh token, following the OAuth recommendations referenced in \cite{lodderstedt2025}.
 
-Incoming HTTP traffic passes through a perimeter filter that validates the signature, extracts the \texttt{tid} claim, and constructs an immutable \texttt{TenantContext}. Our gateway deliberately ignores client-supplied tenant headers (such as \texttt{X-Tenant-Slug}), form parameters, and payload properties to eliminate header injection attacks. If a request carries no credentials, context resolves to empty ($\tau = \emptyset$). Synchronous requests rely on thread-bound state. For asynchronous tasks and Java 25 virtual threads, we route context through custom decorators wrapping \texttt{ScopedValue} bindings, preventing tenant leakage across thread boundaries.
+The active tenant identifier is stored in a private JWT claim named \texttt{tid}. To support immediate account suspension and subscription cancellation, the API gateway checks token identifiers against a revocation set maintained in Redis during sensitive state-changing operations.
+
+When an HTTP request reaches the application, a perimeter filter validates the token signature and extracts the \texttt{tid} claim. It then creates an immutable \texttt{TenantContext} representing the authenticated tenant. The gateway deliberately ignores client-controlled sources such as headers (\texttt{X-Tenant-Slug}), form parameters, and tenant identifiers supplied through request payloads, preventing clients from changing their effective tenant simply by modifying request data.
+
+If a request does not contain valid authentication credentials, the tenant context remains empty: $\tau = \emptyset$. For synchronous requests, the application maintains the context within the request execution flow. Asynchronous operations and Java 25 virtual threads use custom context-propagation decorators together with \texttt{ScopedValue} bindings to prevent tenant information from being unintentionally carried into unrelated tasks.
 
 \subsection{Virtual Threads and Scoped Context Propagation}
-Modern Java runtimes decouple execution concurrency from operating system thread limits by introducing virtual threads managed by the JVM. While this model supports massive request throughput, it breaks traditional assumptions regarding tenant state tracking.
+Modern Java runtimes use virtual threads to support a large number of concurrent tasks without requiring a separate operating-system thread for every request. Although this improves the ability to handle concurrent workloads, it also introduces challenges when request-specific information is stored using traditional thread-local mechanisms.
 
-Under the classic thread-per-request model, developers routinely shoved tenant identities into \texttt{ThreadLocal} variables. That worked adequately when a single OS thread served one request from beginning to end. But virtual threads break that mental model completely. When a system handles hundreds of thousands of concurrent tasks, allocating standard \texttt{ThreadLocal} maps on every virtual thread burns through JVM heap at an alarming rate. To make matters worse, asynchronous executors running \texttt{InheritableThreadLocal} copy mutable references across tasks. When worker threads get reused across distinct requests, tenant context leaks into foreign workloads without warning.
+Under the conventional thread-per-request model, developers commonly use \texttt{ThreadLocal} variables to store information such as the authenticated tenant identifier. This approach works reasonably well when a single operating-system thread handles a request from beginning to end.
 
-NexusOps avoids thread-local pollution by managing context through Java 25 \texttt{ScopedValue} primitives and a custom \texttt{TenantAwareTaskDecorator}. Scoped values enforce strict one-way immutability: once a tenant ID is bound at the request boundary, downstream business logic cannot tamper with or reassign the active identifier. Resource cleanup is similarly deterministic. Instead of depending on defensive \texttt{finally} blocks that engineers might overlook, bindings automatically expire the moment execution exits the enclosing lexical block:
+Virtual threads change this execution model. They can be suspended and resumed on different carrier threads, while asynchronous executors may also reuse worker threads for unrelated tasks. Using \texttt{InheritableThreadLocal} can introduce further problems because mutable references may be propagated between tasks. If tenant context is not managed carefully, information associated with one request may become visible to another execution context.
+
+NexusOps uses Java 25 \texttt{ScopedValue} primitives together with a custom \texttt{TenantAwareTaskDecorator} to manage this context:
 \begin{lstlisting}[language=Java]
 ScopedValue.where(TENANT_SCOPE, tenantId)
-           .run(() -> executor.execute(task));
+    .run(() -> executor.execute(task));
 \end{lstlisting}
-More importantly, this mechanism aligns with how virtual threads mount onto operating system carrier threads. Whenever a virtual thread blocks on socket I/O, the JVM detaches it from the underlying carrier thread; once the database responds, work resumes on whatever carrier thread happens to be free. Because \texttt{ScopedValue} state resides directly on the virtual thread's invocation stack rather than inside a carrier thread table, tenant identifiers travel faithfully with the logical task and leave zero cross-tenant contamination on shared OS threads.
+A scoped value provides a bounded and immutable binding. Once the tenant identifier is established at the request boundary, downstream code cannot replace the active value within that scope. The binding is also removed automatically when execution leaves the enclosing scope, rather than relying entirely on developers to write and maintain cleanup logic in \texttt{finally} blocks.
+
+This approach also fits the execution model of virtual threads. When a virtual thread blocks during an operation such as socket I/O, the JVM can detach it from its carrier thread and later resume it on another available carrier. Because the scoped context belongs to the virtual thread's execution scope rather than the carrier thread, the tenant identifier remains associated with the logical task. This design helps prevent tenant-context contamination when multiple virtual threads share the same underlying operating-system resources.
 
 \subsection{Layer 1: Application-Tier ORM Scoping}
-Every multi-tenant domain entity in NexusOps extends a shared base class:
+The first isolation layer is implemented through Hibernate ORM. Every multi-tenant domain entity in NexusOps extends a common base class that contains the tenant identifier:
 \begin{lstlisting}[language=Java]
 @MappedSuperclass
 public abstract class TenantEntity {
@@ -373,12 +405,12 @@ public abstract class TenantEntity {
   private UUID tenantId;
 }
 \end{lstlisting}
-Hibernate's multi-tenancy support hooks into query generation through a registered \texttt{CurrentTenantIdentifierResolver} \cite{hibernate2025}. Whenever the application prepares JPA queries, Hibernate automatically appends an extra filter clause—\texttt{AND tenant\_id = :currentTenant}—directly into the generated SQL abstract syntax tree. If a query attempts to fetch an entity belonging to another tenant, the filter evaluates to zero rows. The controller layer translates this empty result set into an HTTP 404 response, satisfying Property 5. 
+Hibernate's multi-tenancy support uses a registered \texttt{CurrentTenantIdentifierResolver} to obtain the active tenant identifier \cite{hibernate2025}. When preparing JPA queries, Hibernate automatically injects \texttt{AND tenant\_id = :currentTenant} into generated SQL. Inaccessible records return HTTP 404 responses.
 
-That said, relying solely on Hibernate is dangerous. While Hibernate reliably intercepts standard HQL and criteria queries, raw native SQL statements (\texttt{createNativeQuery}) and direct JDBC queries bypass the ORM compiler altogether \cite{hibernate2025}. That blind spot makes database-level enforcement non-negotiable.
+However, ORM-level filtering has an important limitation. Hibernate can only modify queries that pass through its entity lifecycle and query compiler. Native SQL statements, raw JDBC operations, bulk updates, and database reporting queries can bypass Hibernate's filtering logic. If an application relied only on ORM-level controls, a developer omitting a tenant filter in a native SQL query could unintentionally expose or modify records across tenant boundaries. As a result, application-tier filtering cannot be treated as the only boundary; database-level enforcement remains essential.
 
 \subsection{Layer 2: Forced Database Row-Level Security}
-To catch queries that bypass application ORM filters, every tenant-owned table enables RLS at the PostgreSQL storage engine:
+The second isolation layer is enforced directly by PostgreSQL. To ensure that queries bypassing Hibernate are restricted, every tenant-owned table enables and forces Row-Level Security:
 \begin{lstlisting}[language=SQL]
 ALTER TABLE <tbl> ENABLE ROW LEVEL SECURITY;
 ALTER TABLE <tbl> FORCE ROW LEVEL SECURITY;
@@ -386,15 +418,13 @@ CREATE POLICY tenant_isolation ON <tbl> FOR ALL TO nexusops_app
   USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 \end{lstlisting}
+The policy applies to both read and write operations. The \texttt{USING} condition determines which existing rows are visible to queries, while \texttt{WITH CHECK} restricts rows inserted or modified by write operations.
 
-\textbf{Policy Structure and Platform Roles:}
-We declare this policy as a standard permissive rule for runtime account \texttt{nexusops\_app}. Internal operational workloads, such as provisioning new organizations or running cross-tenant analytics, connect over an isolated credential, \texttt{nexusops\_platform}. This administrative role executes under distinct audit policies and records append-only logs into a quarantined schema, keeping customer tenant queries simple and index-aligned.
+\textbf{Policy Structure and Platform Roles:} The policy is created as a permissive rule for runtime role \texttt{nexusops\_app}. Certain internal operations, such as creating new organizations or performing cross-tenant billing aggregations, require administrative access. NexusOps separates these operational tasks from ordinary application traffic by assigning them to a dedicated database user, \texttt{nexusops\_platform}, operating under separate audit logging.
 
-\textbf{Database Roles and Migration Privileges:}
-Database schema migrations execute through a dedicated migration user, \texttt{nexusops\_owner}, which holds \texttt{BYPASSRLS} and runs exclusively during deployment pipelines. In contrast, the production application connects as the unprivileged user \texttt{nexusops\_app}. This runtime role can execute standard DML operations (\texttt{SELECT}, \texttt{INSERT}, \texttt{UPDATE}, \texttt{DELETE}) but owns zero tables, cannot run DDL, and explicitly carries the \texttt{NOBYPASSRLS} attribute \cite{postgresql17docs}. A database trigger on audit tables blocks unauthorized \texttt{UPDATE} or \texttt{DELETE} operations, while \texttt{TRUNCATE} privileges are revoked outright, satisfying Property 4.
+\textbf{Database Roles and Migration Privileges:} Schema migrations are executed during application deployment using \texttt{nexusops\_owner}. This role possesses table ownership privileges and the \texttt{BYPASSRLS} attribute required to create and alter database objects. The production application, by contrast, connects using the restricted runtime role \texttt{nexusops\_app}, which holds \texttt{NOBYPASSRLS} and cannot alter table structures or create new database objects \cite{postgresql17docs}. Audit tables are protected via database triggers blocking unauthorized \texttt{UPDATE} and \texttt{DELETE}, with \texttt{TRUNCATE} revoked outright (Property 4).
 
-\textbf{Handling Malformed Session Identifiers:}
-Wrapping the configuration call in \texttt{nullif(current\_setting('app.tenant\_id', true), '')::uuid} ensures that empty or uninitialized settings evaluate to SQL \texttt{NULL}. Under SQL ternary logic, equality comparisons with \texttt{NULL} yield \texttt{UNKNOWN}, causing RLS policies to evaluate to false and denying access by default. If a client injects an invalid UUID string, PostgreSQL raises exception code \texttt{22P02} (\textit{invalid\_text\_representation}) and terminates the transaction on the spot.
+\textbf{Handling Missing or Malformed Tenant Identifiers:} The policy uses \texttt{NULLIF} around \texttt{current\_setting('app.tenant\_id', true)}. Missing settings evaluate to \texttt{NULL}, failing closed under SQL three-valued logic. Invalid UUID strings trigger PostgreSQL error \texttt{22P02}, aborting the transaction.
 
 \begin{figure*}[t]
 \centering
@@ -404,13 +434,16 @@ Wrapping the configuration call in \texttt{nullif(current\_setting('app.tenant\_
 \end{figure*}
 
 \subsection{Connection Sanitization across Recycled Pools}
-Production backends reuse physical database connections through HikariCP. If an application attempts to run \texttt{set\_config()} during raw connection checkout before starting a transaction, the statement executes in autocommit mode. That mistakenly strips transaction-local scoping (\texttt{is\_local = true}) the second the checkout query finishes.
+Production application servers commonly use connection pools such as HikariCP to manage database connections efficiently. Rather than opening a new physical connection for each incoming request, the pool reuses a fixed set of database connections across many transactions. If session settings are executed in autocommit mode, settings clear immediately upon checkout.
 
-NexusOps eliminates this pitfall by deferring session binding until the transaction boundary is fully initialized, coordinating through Spring transaction synchronization hooks and a custom Hibernate connection interceptor (Fig. \ref{fig:state_machine}). The resulting lifecycle forms a deterministic state machine. When \texttt{PlatformTxManager} checks out a pooled connection, it immediately clears the autocommit flag (\texttt{autoCommit = false}). Before application code can fire its first repository query, our connection interceptor intercepts the channel and issues the local binding hook:
-\begin{lstlisting}[language=SQL]
-SELECT set_config('app.tenant_id', ?, true);
-\end{lstlisting}
-This pins the tenant context strictly to the live transaction block. Repositories then execute application queries under dual protection: Hibernate injects ORM tenant parameters while PostgreSQL validates RLS constraints at the storage engine. The moment the transaction terminates via \texttt{COMMIT} or \texttt{ROLLBACK}, PostgreSQL's internal transaction teardown automatically evicts the transaction-scoped setting. The connection then returns to HikariCP in an immaculate state, eliminating any risk of cross-tenant session bleeding.
+NexusOps addresses this issue by delaying tenant binding until the database transaction is established. The connection lifecycle follows five distinct operational states (Fig. \ref{fig:state_machine}):
+\begin{enumerate}
+\item \textbf{S0 – Pool Idle:} HikariCP holds an idle connection with no active tenant context ($\tau = \emptyset$).
+\item \textbf{S1 – Transaction Initiated:} The platform transaction manager obtains a connection from the pool and sets \texttt{autoCommit = false}.
+\item \textbf{S2 – Context Bound:} Before the first repository query executes, the interceptor sets \texttt{app.tenant\_id} locally for the active transaction.
+\item \textbf{S3 – DML Scoped:} Application queries execute with both Hibernate filtering and PostgreSQL RLS active.
+\item \textbf{S4 – Purge and Sanitize:} When the transaction completes through \texttt{COMMIT} or \texttt{ROLLBACK}, PostgreSQL removes the transaction-local setting before the connection is returned to the pool.
+\end{enumerate}
 
 \begin{lstlisting}[language=Java,caption={Transaction Connection Interceptor}]
 public class TenantConnectionInterceptor implements ConnectionProvider {
@@ -432,66 +465,77 @@ public class TenantConnectionInterceptor implements ConnectionProvider {
   }
 }
 \end{lstlisting}
+The interceptor first obtains a connection from the data source and checks whether a Spring transaction is active. When a transaction is active and a tenant identifier is available, the interceptor executes a parameterized \texttt{set\_config()} statement. The third argument is set to \texttt{true}, making the session variable transaction-local.
 
-Because this configuration is transaction-scoped (\texttt{is\_local = true}), setting the variable introduces a minor $0.038$ ms dispatch overhead per transaction boundary rather than on every individual query.
+The tenant context is therefore established within the transaction boundary rather than at the connection level. When the transaction finishes, PostgreSQL automatically clears the variable, ensuring that the connection returns to the pool in a clean state. This transaction-scoped binding introduces approximately $0.038$ ms dispatch overhead per transaction boundary.
 
 \section{Automated Guardrails Against Policy Erosion}
 \label{sec:guardrails}
-Defenses built on solid theoretical foundations often fail for an unglamorous reason: fast-moving engineering teams accidentally break them months later. A developer under deadline adds a reporting table in Flyway, forgets the \texttt{ALTER TABLE ... ENABLE ROW LEVEL SECURITY} clause, and suddenly the database has an unmonitored blind spot. To prevent security rules from decaying over time as the schema evolves, NexusOps wraps the database in three automated guardrails spanning CI pipelines, test execution, and application boot.
+
+Security controls may be correctly implemented when an application is first developed, but that does not guarantee they will remain effective as the system changes. New tables, reporting views, database functions, and migration scripts can introduce gaps in tenant isolation if existing security requirements are not checked consistently.
+
+In a fast-moving development environment, relying only on code reviews and developer awareness is not sufficient. A migration that creates a new table without enabling RLS, for example, may introduce an unprotected data path without producing an obvious application error.
+
+To reduce this risk, NexusOps uses three automated guardrails operating across the development and deployment lifecycle: build-time catalog auditing, policy mutation testing, and runtime database-role verification.
 
 \subsection{Build-Time Catalog Auditing and AST Verification}
-Pull-request checklists and manual code reviews fail because humans get tired. Instead of counting on developer vigilance, our test suite (\texttt{RlsCoverageIT}) audits the live PostgreSQL system catalog directly during the Maven build. It spins up an ephemeral Testcontainers database populated with current migrations and runs an exhaustive catalog probe across \texttt{pg\_class}, \texttt{pg\_namespace}, \texttt{pg\_policy}, and \texttt{pg\_views}:
+NexusOps uses an integration test named \texttt{RlsCoverageIT} to examine the PostgreSQL system catalog during the Maven build. The test starts an ephemeral PostgreSQL database through Testcontainers, applies current migrations, and checks the resulting security configuration across \texttt{pg\_class}, \texttt{pg\_namespace}, \texttt{pg\_policy}, and \texttt{pg\_views}:
 \begin{lstlisting}[language=SQL]
 SELECT c.relname, p.polname
-FROM pg_class c 
+FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 LEFT JOIN pg_policy p ON p.polrelid = c.oid
-WHERE n.nspname = 'public' 
+WHERE n.nspname = 'public'
   AND c.relkind IN ('r', 'p')
   AND c.relname NOT IN ('permissions', 'subscription_plans')
-  AND (NOT c.relrowsecurity 
-       OR NOT c.relforcerowsecurity 
-       OR p.polname IS NULL 
-       OR p.polcmd != '*' 
+  AND (NOT c.relrowsecurity
+       OR NOT c.relforcerowsecurity
+       OR p.polname IS NULL
+       OR p.polcmd != '*'
        OR NOT p.polpermissive
-       OR pg_get_expr(p.polqual, p.polrelid) 
+       OR pg_get_expr(p.polqual, p.polrelid)
           IS DISTINCT FROM :canonicalExpr
-       OR pg_get_expr(p.polwithcheck, p.polrelid) 
+       OR pg_get_expr(p.polwithcheck, p.polrelid)
           IS DISTINCT FROM :canonicalExpr
        OR (SELECT count(*) FROM pg_policy WHERE polrelid = c.oid) != 1);
 \end{lstlisting}
-Here, \texttt{:canonicalExpr} binds the exact canonical predicate string:
+where \texttt{:canonicalExpr} contains the canonical tenant-isolation predicate:
 \begin{lstlisting}[language=SQL]
 (tenant_id = (NULLIF(
-  current_setting('app.tenant_id'::text, true), 
+  current_setting('app.tenant_id'::text, true),
   ''::text))::uuid)
 \end{lstlisting}
-PostgreSQL decompiles stored expression trees into clean text representations via \texttt{pg\_get\_expr()}. By comparing this decompiled AST against our canonical template using \texttt{IS DISTINCT FROM}, the guard catches deviations even when formatting differs or clauses evaluate to \texttt{NULL}.
+PostgreSQL provides the \texttt{pg\_get\_expr()} function to convert stored expression trees into readable SQL expressions. NexusOps compares these expressions with the canonical predicate using \texttt{IS DISTINCT FROM}. This comparison helps identify differences in the stored policy expressions, including cases where an expected expression is missing or evaluates to NULL.
 
-Four hard criteria dictate whether a database relation passes our build gate. To begin with, every domain table must assert both \texttt{relrowsecurity} and \texttt{relforcerowsecurity}. Forgetting the force flag fails the build immediately because table owners could otherwise query rows without restriction. At the AST level, read qualifications (\texttt{polqual}) and write conditions (\texttt{polwithcheck}) must mirror our canonical predicate down to the exact syntax tree. We also cap policy cardinality at exactly one permissive policy per relation. If an engineer accidentally adds a second permissive rule—say, for reporting or analytics—PostgreSQL unions them with boolean \texttt{OR}, immediately punching a hole through tenant boundaries. Finally, any database view created over tenant data must declare \texttt{security\_invoker = true} in \texttt{pg\_views}, ensuring caller context propagates down through queries.
+The build-time audit enforces four main requirements:
+\begin{enumerate}
+\item \textbf{RLS and FORCE RLS must both be enabled:} Every tenant-owned table must have both \texttt{relrowsecurity} and \texttt{relforcerowsecurity} enabled. Without FORCE RLS, the table owner may bypass row-level restrictions.
+\item \textbf{Read and write predicates must match the canonical expression:} The policy's \texttt{polqual} and \texttt{polwithcheck} expressions must follow the expected tenant condition.
+\item \textbf{Policy cardinality must remain controlled:} Each relation must have exactly one permissive policy. This prevents an additional permissive policy from unintentionally expanding access through PostgreSQL's OR-based policy combination.
+\item \textbf{Views must preserve caller security context:} A database view that accesses tenant-owned data must use \texttt{security\_invoker = true}, so that access is evaluated using the invoking user's permissions and RLS context.
+\end{enumerate}
+If any of these requirements is violated, the catalog audit reports the affected relation and causes the build to fail.
 
 \subsection{Policy Mutation Analysis Across Four Operational Quadrants}
-Can a simple catalog check reliably catch every human error? To find out, we attacked our verification script with a dedicated suite of 16 schema mutants (\texttt{verify\_policy\_guard.sh}), cycling through deliberately broken table definitions on an ephemeral relation (\texttt{probe\_table}). These test cases replicate four classes of real-world developer mistakes:
+A catalog check may identify missing or incorrect policy configurations, but its effectiveness also needs to be tested against deliberate failures. To evaluate this, NexusOps uses a dedicated mutation-testing script named \texttt{verify\_policy\_guard.sh}. The script introduces 16 deliberately incorrect schema configurations into a temporary relation called \texttt{probe\_table}, grouped into four operational categories:
 
-\subsubsection{Quadrant I: Missing Flags and Exemption Holes}
-Here we test what happens when migration scripts leave out essential safety switches. Mutant 1 (Unprotected Table) simulates a rush migration that creates a table without RLS; the audit trips on \texttt{NOT c.relrowsecurity}. Mutant 2 (Unforced Owner Bypass) turns on RLS but leaves off \texttt{FORCE}, creating a silent leak whenever queries run under the table owner role. Mutant 5 (Missing Write Check) models an engineer who crafts a proper \texttt{USING} read clause but forgets \texttt{WITH CHECK}, letting tenants insert rows with arbitrary foreign IDs; the guard catches this because \texttt{polwithcheck} decompiles to \texttt{NULL}. Mutant 8 (Maintenance Role Leak) tests background batch scripts executing against unforced tables under administrative accounts. Our catalog query flagged all four failure modes without exception.
+\textbf{1) Quadrant I: Missing Flags and Exemption Holes:} Mutant 1 (Unprotected Table) creates a table without enabling RLS. Mutant 2 (Unforced Owner Bypass) enables RLS but omits FORCE RLS, allowing the table owner to bypass the policy. Mutant 5 (Missing Write Check) defines a valid \texttt{USING} condition but omits \texttt{WITH CHECK}. Mutant 8 (Maintenance Role Leak) simulates administrative operations against unforced tables. All 4 configuration failures are detected by the catalog checks.
 
-\subsubsection{Quadrant II: Predicate Distortion and Permissive Injections}
-Developers tweaking SQL policies by hand often introduce subtle logical flaws. Mutant 3 (Permissive Write Hole) sets \texttt{WITH CHECK (true)}, locking down reads while letting rogue accounts write into competitor namespaces. Mutant 4 (Permissive Read Hole) introduces the inverse bug with \texttt{USING (true)}, dumping all tenant records to the world. Mutant 7 (Column Misdirection) accidentally filters on \texttt{created\_by} instead of \texttt{tenant\_id}. Mutant 8b (Missing Empty-String Safeguard) invokes \texttt{current\_setting('app.tenant\_id')::uuid} without wrapping it in \texttt{NULLIF(..., '')}, triggering unhandled cast exceptions on unauthenticated queries instead of failing closed with an empty set. Mutants 13 and 14 (Tautological OR Injections) append \texttt{OR true} to read or write expressions, while Mutant 15 (Hardcoded Tenant Literal) bakes an experimental testing UUID straight into migration DDL. Mutant 16 (GUC Namespace Drift) introduces typographical slips like \texttt{'app.tenant'} or \texttt{'session.tenant\_id'}. In all seven variations, decompiled AST string matching halted the test suite immediately.
+\textbf{2) Quadrant II: Predicate Distortion and Permissive Injections:} Mutant 3 (Permissive Write Hole) sets \texttt{WITH CHECK (true)}, removing write restrictions. Mutant 4 (Permissive Read Hole) sets \texttt{USING (true)}, allowing unrestricted row visibility. Mutant 7 (Column Misdirection) filters \texttt{created\_by} instead of \texttt{tenant\_id}. Mutant 8b omits \texttt{NULLIF}, risking exceptions on uninitialized settings. Mutants 13 and 14 add tautological \texttt{OR true} injections. Mutant 15 places a hardcoded UUID literal into the policy. Mutant 16 changes the expected session variable name (GUC namespace drift). The AST comparison detects all 7 deviations from the canonical expression.
 
-\subsubsection{Quadrant III: Role Misconfigurations and Restrictive Deadlocks}
-PostgreSQL's policy combination logic can trip up experienced engineers. In Mutant 6 (Disjunctive Policy Stacking), a developer introduces an auxiliary permissive policy for reporting, unaware that PostgreSQL merges permissive policies using boolean \texttt{OR}—a nuance that silently bypasses the primary tenant boundary. The cardinality check catches this instantly. Mutant 9 (Orphan Restrictive Rule) adds a policy \texttt{AS RESTRICTIVE} without a parent permissive policy; because restrictive rules apply via \texttt{AND} on top of permissive rules, an orphan rule denies access to everyone, generating an unintended denial of service. The guard flags any relation where \texttt{NOT p.polpermissive}. Mutants 11 and 12 (Command Scope Asymmetry) apply policies solely to \texttt{SELECT} or \texttt{INSERT}, failing our requirement for universal command coverage (\texttt{p.polcmd = '*'}).
+\textbf{3) Quadrant III: Role Misconfigurations and Restrictive Deadlocks:} Mutant 6 (Disjunctive Policy Stacking) adds a second permissive policy, expanding access through OR-combination. Mutant 9 (Orphan Restrictive Rule) adds a restrictive policy without an appropriate permissive policy, causing denial of service. Mutants 11 and 12 apply policies only to selected operations (SELECT or INSERT) rather than covering all commands (\texttt{*}). The audit checks catch all 4 misconfigurations.
 
-\subsubsection{Quadrant IV: Unsafe Relational Views}
-Database views represent a notorious blind spot in multi-tenant architectures. Mutant 10 (Defective View Invoker) defines an analytics view over multi-tenant tables without setting \texttt{security\_invoker = true}. Standard PostgreSQL views evaluate under the creator's security context, bypassing caller RLS entirely. Our audit inspects \texttt{pg\_views} directly, enforcing invoker semantics before any view lands in production.
+\textbf{4) Quadrant IV: Unsafe Relational Views:} Mutant 10 (Defective View Invoker) creates an analytics view over tenant-owned data without setting \texttt{security\_invoker = true}. Under default view behavior, access is evaluated using the creator's permissions, undermining RLS. NexusOps flags this via \texttt{pg\_views}.
 
-Across the entire 16-mutant suite, the automated guard achieved a 100\% detection rate (16 of 16 blocked), leaving zero unmonitored pathways.
+Across the complete mutation suite, the reported guardrail detection result was 16 out of 16 mutations blocked, corresponding to a 100\% detection rate within tested scenarios.
 
 \subsection{Runtime Startup Role Verification}
-Even with perfect policies on disk, row security collapses if the web service logs in with superuser powers. A single errant environment variable pointing to the database admin account nullifies every RLS rule. To prevent accidental privilege leaks at deployment time, \texttt{DatabaseRoleGuard} runs during Spring's bootstrap sequence before accepting any inbound HTTP traffic. It probes the active connection metadata, immediately aborting startup if \texttt{nexusops\_app} holds superuser rights (\texttt{rolsuper}), carries the RLS bypass flag (\texttt{rolbypassrls}), owns the application tables, or possesses \texttt{CREATE} privileges in the schema namespace. Our baseline Flyway migration also revokes \texttt{PUBLIC} execution rights on shared functions, closing off untrusted \texttt{SECURITY DEFINER} privilege escalation pathways.
+Correct database policies are not enough if the application connects using an account with excessive privileges. A runtime account with superuser privileges or the \texttt{BYPASSRLS} attribute can bypass the intended row-level restrictions.
+
+To reduce this risk, NexusOps includes a startup verification component named \texttt{DatabaseRoleGuard}. The component runs during Spring's application bootstrap sequence, before the service begins accepting HTTP requests. It checks the privileges associated with the active database connection and stops application startup if the \texttt{nexusops\_app} role possesses superuser privileges (\texttt{rolsuper}), RLS-bypass attributes (\texttt{rolbypassrls}), table ownership, or schema \texttt{CREATE} permissions. The baseline Flyway migration also revokes \texttt{PUBLIC} execution privileges on shared functions, closing untrusted \texttt{SECURITY DEFINER} escalation pathways.
 
 \subsection{Automated Isolation Test Suites}
-Table \ref{tab:tests} outlines the 33 automated isolation tests integrated into our continuous delivery pipeline. Spanning HTTP boundaries, ORM configurations, raw SQL behavior, and database catalog rules, the test matrix runs on every commit. Across all development cycles, the suite has maintained a 100\% passing record with zero regressions.
+The guardrails described above are supported by a collection of automated test suites. Table \ref{tab:tests} lists the seven test suites and their responsibilities.
 
 \begin{table}[t]
 \renewcommand{\arraystretch}{0.95}
@@ -517,15 +561,19 @@ Table \ref{tab:tests} outlines the 33 automated isolation tests integrated into 
 \end{tabular}
 \end{table}
 
+The \texttt{RlsBehaviourIT} suite checks database-level behavior, including cross-tenant reads, updates, and audit modifications. \texttt{CanonicalRlsIT} verifies isolation across directory tables. \texttt{TenantIsolationIT} and \texttt{CrossTenantApiIT} test application and HTTP behavior, verifying token handling, cache isolation, and HTTP 404 responses. The \texttt{RlsCoverageIT} suite examines database catalog configurations, while \texttt{DatabaseRoleGuard} and \texttt{ModularityTest} enforce runtime role privileges and architectural package boundaries. According to Table \ref{tab:tests}, the test collection contains 33 automated tests, achieving a 100\% pass rate in continuous integration.
+
 \section{Empirical Security Evaluation}
 \label{sec:sec_eval}
 
+A security design may appear sound on paper, but its effectiveness becomes clearer when the system is exposed to realistic implementation mistakes. Developers may overlook an annotation, introduce an unsafe database query, or deploy a migration with an incomplete security policy. These situations can create weaknesses even when the overall architecture follows a defense-in-depth approach.
+
+To examine how NexusOps responds to such failures, we defined 16 fault scenarios covering application code, database configuration, connection management, and related infrastructure. The results are summarized in Table \ref{tab:fault_injection}.
+
 \subsection{Fault-Injection Mutation Testing}
-Security models look impenetrable on whiteboards. The real test is what happens when tired engineers rush hotfixes under production fire or operators deploy misconfigured environments. To evaluate where NexusOps bends or breaks, we formulated 16 concrete failure scenarios across application code, database schema configurations, and connection pools (Table \ref{tab:fault_injection}).
+Several scenarios demonstrate the importance of enforcing tenant isolation at more than one layer. For example, omitting the \texttt{@TenantId} annotation from a newly added JPA entity (Scenario 1) or executing a native SQL query without a tenant predicate (Scenario 2) can bypass the application's ORM-level filtering. In both cases, PostgreSQL RLS still restricts the returned rows to the tenant associated with the active transaction.
 
-The findings expose why single-tier defenses consistently fail under pressure. Consider a routine oversight: an engineer forgets the \texttt{@TenantId} annotation on a newly committed entity (Scenario 1) or drafts an ad-hoc native SQL report missing tenant filters (Scenario 2). The application layer passes the query untouched. Yet because PostgreSQL enforces RLS at the kernel storage level, the database silently restricts returned tuples to the active transaction tenant, averting a critical data breach. The defense works in reverse as well: when an adversary enumerates sequential entity IDs across tenants (Scenario 15), the application layer denies the attempt with an HTTP 404 before the database spends any CPU cycles on query parsing.
-
-Scenario 16 establishes an essential negative control. If an attacker injects unparameterized dynamic SQL and executes \texttt{set\_config('app.tenant\_id', ...)}, neither ORM scoping nor row security can prevent context impersonation. This boundary is critical to acknowledge: database row-level security exists to catch developer omissions, broken repository calls, and rogue internal queries, not to substitute for parameterized query hygiene.
+The same principle applies to connection reuse. A connection that previously served another tenant may retain an incorrect context if its state is not reset properly. Scenario 4 examines this condition. The database-level protection prevents access to rows belonging to the previous tenant, while the automated test suite checks that the connection lifecycle behaves as expected.
 
 \begin{table}[t]
 \renewcommand{\arraystretch}{0.92}
@@ -560,34 +608,63 @@ Scenario 16 establishes an essential negative control. If an attacker injects un
 }
 \end{table}
 
+Other scenarios examine failures that cannot be addressed by either isolation layer alone. For example, Scenario 15 tests sequential entity-ID enumeration across tenants. The application responds with HTTP 404 for an identifier that does not belong to the authenticated tenant, avoiding unnecessary database processing and reducing the information exposed through the API.
+
+Scenario 16 examines a fundamental limitation. If an attacker can inject unparameterized dynamic SQL and execute a statement that changes \texttt{app.tenant\_id} through \texttt{set\_config()}, both ORM filtering and RLS may be undermined because the tenant context itself has been compromised. This is an important boundary of the proposed design: RLS is intended to protect against developer omissions, unsafe repository calls, and unintended internal queries; it is not a replacement for parameterized SQL or secure query construction.
+
+Overall, the fault-injection results show how the two isolation layers and the CI/startup guardrails respond to different categories of failure. Table \ref{tab:fault_injection} records which layer prevents each scenario and which failures are detected through automated checks.
+
 \subsection{Concurrency Leakage Benchmark and Positive Controls}
-Unit tests will never catch transient state corruption under load. In high-throughput SaaS backends, data leaks almost always show up as concurrency glitches—dirty connection pool sockets carrying leftover session state, thread context leaks across asynchronous handoffs, or race conditions during high-volume tenant context switches.
+Unit tests are useful for checking expected application behavior, but they may not reveal problems that occur only under concurrent execution. In a multi-tenant application, connection reuse, asynchronous task handoffs, and rapid changes in tenant context can introduce temporary state inconsistencies. Such failures are particularly important to investigate when many requests share a limited database connection pool.
 
-To push NexusOps to its limits, we hammered the platform with 1,000,000 randomized cross-tenant requests. The load generator drove 100 concurrent worker threads multiplexed over a 32-connection HikariCP pool, forcing 940,000 distinct tenant context switches across 100 organizations and 16 business tables.
+We therefore evaluated NexusOps using a concurrent workload designed to exercise tenant-context switching under sustained request activity. The test generated 1,000,000 randomized cross-tenant requests using 100 concurrent worker threads sharing a HikariCP pool of 32 database connections. Across the test, the workload produced 940,000 tenant-context transitions involving 100 organizations and 16 business tables.
 
-\textbf{Canary Token Verification Harness:} To detect even a single leaked row without manual log inspection, every persisted record embeds an encrypted Canary Token formatted as \texttt{canary\_\{tenant\_id\}\_\{uuid\}}. Each test client validates that every returned row carries a canary matching its assigned JWT claim. If a single foreign token slips through, the harness halts the run on the spot.
+\textbf{Canary Token Verification Harness:} Each persisted record included an encrypted canary token in the format:
+\begin{lstlisting}
+canary_{tenant_id}_{uuid}
+\end{lstlisting}
+After receiving a query result, each test client checked whether the token belonged to the tenant identified by its assigned JWT claim. This provided a direct way to identify cross-tenant records in the response. If even one record carried a token associated with another tenant, the test harness immediately stopped the run.
 
-\textbf{Positive Controls and Harness Verification:} To make sure our harness was actually sensitive and not giving us false confidence, we ran three positive controls. When we intentionally disabled Hibernate tenant filters across 10,000 probe requests, PostgreSQL's RLS engine cleanly stopped every single probe (zero leaks). When we did the opposite and dropped RLS at the database tier, Hibernate's ORM filters stepped up and kept all records isolated (zero leaks). But when we took the safety off both tiers simultaneously on a test endpoint, the canary harness immediately tripped, intercepting 100\% of the resulting cross-tenant leaks in under 12 ms, proving harness fidelity.
+\textbf{Positive Controls and Harness Verification:} A test harness must be capable of detecting a failure before its results can be trusted. To verify this, we performed three positive-control experiments:
+\begin{enumerate}
+\item First, Hibernate tenant filters were deliberately disabled while PostgreSQL RLS remained active. Across 10,000 probe requests, the database policy blocked every cross-tenant access attempt.
+\item Second, RLS was disabled at the database layer while Hibernate filters remained active. In this configuration, the ORM layer maintained tenant isolation, producing zero observed leaks.
+\item Finally, both protections were disabled simultaneously on a dedicated test endpoint. Under this condition, the canary-token harness detected all resulting cross-tenant leaks in less than 12 ms.
+\end{enumerate}
+These controls demonstrate that the harness distinguished between protected and deliberately unprotected configurations rather than simply reporting successful test execution.
 
-\textbf{Statistical Bound (Rule-of-Three):} Across the complete run of $N = 1,000,000$ concurrent transactions, we observed exactly zero cross-tenant record leaks ($0 / 10^6$). Applying the Hanley--Lippman-Hand Rule-of-Three \cite{hanley1983}, we establish a 95\% upper confidence bound on the probability of a cross-tenant data leak:
+\textbf{Statistical Bound Using the Rule of Three:} During the complete concurrency experiment, the harness observed zero cross-tenant record leaks across one million requests.
+
+A zero-event result does not establish that the probability of leakage is exactly zero. Instead, the Hanley--Lippman-Hand Rule of Three \cite{hanley1983} provides an approximate upper confidence bound for the event probability when no failures are observed. For $N$ independent observations with zero observed events, the approximate 95\% upper bound is:
 \begin{equation}
-p_{95\%} < \frac{3}{N} = \frac{3}{10^6} = 3 \times 10^{-6} \quad (0.0003\%)
+p_{95\%} < \frac{3}{N}
 \end{equation}
-This empirical bound gives us confidence that transaction boundary resets, connection sanitization, and scoped context propagation hold up under continuous stress. We emphasize that this bound reflects empirical behavior under our evaluated test workloads rather than a universal guarantee against unmonitored query paths or lower-level kernel vulnerabilities.
+Substituting the observed number of requests:
+\begin{equation}
+p_{95\%} < \frac{3}{1,000,000} = 3 \times 10^{-6} \quad (0.0003\%)
+\end{equation}
+This corresponds to an approximate upper bound of 0.0003\% for the evaluated test conditions.
+
+The result provides empirical evidence that transaction-boundary resets, connection sanitization, and tenant-context propagation operated correctly under the tested workload. However, it should be interpreted within the limits of the experiment. It does not establish a universal guarantee against untested query paths, compromised tenant credentials, lower-level database vulnerabilities, or other conditions outside the test environment.
 
 \section{Experimental Performance Evaluation}
 \label{sec:evaluation}
 
 \subsection{Experimental Methodology}
-Quantifying the performance overhead of defense-in-depth requires separating two very different costs: the network protocol cost of setting session configuration variables and the relational engine cost of evaluating row security predicates. We set up an experimental testbed on PostgreSQL 17.11 to benchmark these factors under controlled conditions.
+Evaluating the performance of a defense-in-depth architecture requires looking at two separate sources of overhead. The first comes from the additional network operation needed to set the tenant session variable. The second comes from PostgreSQL evaluating row-level security predicates during query execution. Measuring both together would make it difficult to determine how much overhead is introduced by each mechanism.
 
-The evaluation dataset consists of 1,000,000 records distributed evenly across 100 organizations (10,000 records per organization). Each entity record combines a 64-bit integer primary key, a 128-bit UUID tenant discriminator, and standard business fields (name, email, timestamp), backed by a composite index on \texttt{(tenant\_id, name)}.
+We therefore designed the benchmark around PostgreSQL 17.11 and compared three configurations under controlled conditions:
+\begin{enumerate}
+\item \textbf{Filter-Only Baseline (ORM Tier):} This configuration used shared database tables without enabling database-level RLS. Tenant filtering was performed by the application through generated SQL conditions such as \texttt{WHERE tenant\_id = ?}. No \texttt{set\_config()} call was required.
+\item \textbf{Sanitized Filtering (Protocol Baseline):} This configuration retained application-level tenant filtering and added session-variable assignment when a connection was checked out. Database RLS remained disabled. This allowed us to measure the additional client-server communication required to establish the tenant context.
+\item \textbf{Dual-Layer (PostgreSQL Forced RLS + Filter):} This configuration enabled both ORM filtering and forced database-level RLS. The tenant context was assigned to the database session, and PostgreSQL evaluated the corresponding security predicates while executing the same application queries.
+\end{enumerate}
 
-To untangle these latency contributors, our experiments contrast three progressive architectures. The \textit{Filter-Only Baseline (ORM Tier)} runs traditional shared tables without database RLS; queries rely entirely on application-injected parameters (\texttt{WHERE tenant\_id = ?}) without executing \texttt{set\_config()}. The \textit{Sanitized Filtering (Protocol Baseline)} adds session variable assignment upon connection checkout while leaving tables unprotected by RLS, capturing client-server wire protocol overhead in isolation. Finally, \textit{Dual-Layer (PostgreSQL Forced RLS + Filter)} activates both defenses simultaneously, binding the session context and evaluating kernel RLS predicates under identical query statements.
+Using \texttt{pgbench}, we evaluated four common database operations: single-entity Point Lookups, keyset-paginated Paged Lists of 20 sorted rows, aggregate Tenant Counts across all tenant records, and Point Inserts evaluating the RLS \texttt{WITH CHECK} policy condition.
 
-Using \texttt{pgbench}, we evaluated four archetypal database access patterns: single-entity Point Lookups, keyset-paginated Paged Lists of 20 sorted rows, aggregate Tenant Counts across all tenant records, and Point Inserts evaluating the \texttt{WITH CHECK} policy constraint.
+The evaluation dataset contained 1,000,000 records distributed evenly across 100 organizations (10,000 records per organization). Each record included a 64-bit integer primary key, a 128-bit UUID tenant identifier, and standard business attributes, backed by a composite index on \texttt{(tenant\_id, name)}.
 
-All benchmarks ran on a dedicated Linux host (kernel 6.6, AMD EPYC 7763, 10 vCPUs, 16 GB RAM, NVMe SSD storage) running PostgreSQL 17.11. Engine settings were fixed at \texttt{shared\_buffers = 4GB}, \texttt{work\_mem = 64MB}, and \texttt{max\_connections = 200}, with \texttt{synchronous\_commit = off} to keep disk flush latency from masking executor behavior. We drove load using 8 concurrent clients across 4 worker threads for 2 seconds per trial, preceded by unmeasured warm-up runs. To eliminate storage bloat drift across write runs, tables were truncated, re-seeded, and vacuumed between cycles. Following rigorous benchmarking recommendations \cite{georges2007, kalibera2013, mytkowicz2009}, we gathered $n = 30$ randomized paired trials for each scenario.
+All experiments ran on a dedicated Linux host (kernel 6.6, AMD EPYC 7763, 10 vCPUs, 16 GB RAM, NVMe SSD storage) running PostgreSQL 17.11 with \texttt{shared\_buffers = 4GB}, \texttt{work\_mem = 64MB}, \texttt{max\_connections = 200}, and \texttt{synchronous\_commit = off}. Each trial used 8 concurrent clients across 4 worker threads for 2 seconds after an unmeasured warm-up period. Tables were truncated, reseeded, and vacuumed between cycles. Following established benchmarking guidelines \cite{georges2007, kalibera2013, mytkowicz2009}, we gathered $n = 30$ randomized paired trials for each workload.
 
 \begin{figure}[t]
 \centering
@@ -595,7 +672,6 @@ All benchmarks ran on a dedicated Linux host (kernel 6.6, AMD EPYC 7763, 10 vCPU
 \caption{Distribution of paired throughput ratios (Dual-Layer RLS / Filter-Only Baseline) across $n = 30$ paired repetitions for all four microbenchmarks. Shaded region delineates the $\pm 5\%$ equivalence corridor $[\theta_L=0.95, \theta_U=1.05]$. Diamond markers and error bars depict sample means and 95\% confidence intervals.}
 \label{fig:ratio}
 \end{figure}
-
 \begin{table*}[t]
 \renewcommand{\arraystretch}{0.95}
 \caption{Throughput, Latency, and Equivalence Testing Across Workloads ($n = 30$ Paired Runs)}
@@ -617,7 +693,6 @@ Point insert & $4,981 \pm 617$    & $4,572 \pm 355$   & $4,464 \pm 448$   & $0.9
 \end{tabular}%
 }
 \end{table*}
-
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.95\textwidth]{figures/fig5_latency_cdf.pdf}
@@ -626,13 +701,17 @@ Point insert & $4,981 \pm 617$    & $4,572 \pm 355$   & $4,464 \pm 448$   & $0.9
 \end{figure*}
 
 \subsection{Throughput, Latency, and Statistical Equivalence}
-Table \ref{tab:benchmarks} summarizes throughput distributions, confidence intervals, and tail latencies across all 30 paired trials. Throughput and concurrency yield mean latencies ($L = c / \text{tps}$), while 99th percentile tail latencies ($p99$) are extracted directly from full transaction logs (\texttt{pgbench -l}) with 95\% empirical confidence intervals (illustrated in Fig. \ref{fig:latency_comp}).
+Table \ref{tab:benchmarks} summarizes the throughput and latency measurements obtained across the 30 paired trials. Mean transaction latency was derived from transaction rate ($L = c/\text{tps}$), while the 99th-percentile tail latency was calculated directly from transaction logs (\texttt{pgbench -l}). Figure \ref{fig:latency_comp} presents the corresponding mean and tail-latency comparisons.
 
-\textbf{Decomposing Overhead Sources:}
-Inspecting the numbers in Table \ref{tab:benchmarks} reveals two separate physical factors behind the measured latency gap. One factor is socket protocol transit. On small, single-query transactions, issuing a standalone \texttt{set\_config()} call over the wire introduces roughly $0.17$ to $0.44$ ms of network delay. This round-trip largely explains why dual-layer throughput appears lower ($0.726$--$0.907$ of the un-sanitized baseline) during synthetic microbenchmarks, although real-world transactions amortize this setup cost across multiple business statements. The second factor is internal policy evaluation inside the database kernel. Contrasting Dual-Layer RLS with the \texttt{Filter + Sanitized} baseline—where both pathways execute the exact same context-setting call—isolates the true workload imposed on PostgreSQL's executor. Here the cost is remarkably low: \textit{Point Insert} shows only $2.3\%$ overhead (ratio $0.977$, 95\% CI $[0.947, 1.007]$), while read workloads experience a modest $6.3\%$ to $8.8\%$ delta because the query planner collapses canonical equality checks into cached index probes.
+\textbf{Separating Protocol and Database Overhead:} The results show that the measured performance difference has two main sources. The first is the additional network round-trip required to execute \texttt{set\_config()}. For short transactions involving a single database statement, this operation adds approximately $0.17$--$0.44$ ms. Since the Filter-Only Baseline does not perform this operation, the Dual-Layer configuration achieves throughput ratios between $0.726$ and $0.907$ relative to that baseline across the four microbenchmarks.
 
-\textbf{Statistical Equivalence Testing via TOST:}
-Rather than simply testing whether differences are statistically significant ($p < 0.05$), we applied Two One-Sided Tests (TOST) \cite{schuirmann1987, lakens2018} to determine whether Dual-Layer RLS is practically equivalent to the sanitized baseline within an operational tolerance corridor of $\pm 10\%$ ($\theta_L = 0.90, \theta_U = 1.10$). Testing the log-transformed ratio $z_i = \ln(\text{Throughput}_{\text{Dual}, i} / \text{Throughput}_{\text{Sanitized}, i})$, we rejected the null hypotheses of meaningful divergence for Paged List ($p = 2.33 \times 10^{-3}$), Tenant Count ($p = 3.22 \times 10^{-2}$), and Point Insert ($p = 5.55 \times 10^{-6}$). For write operations, Cohen's $d = -0.98$ and the 95\% confidence interval $[0.947, 1.007]$ crosses unity, confirming that evaluating \texttt{WITH CHECK} policies at row insertion preserves write scalability.
+However, this comparison includes both session-configuration and RLS costs. To isolate the database-level contribution, we compared Dual-Layer RLS against the Filter + Sanitized configuration. Both configurations perform the same context-setting operation, so the remaining difference primarily reflects the additional work performed by PostgreSQL's RLS enforcement. The point-insert workload showed the smallest difference: its throughput ratio was $0.977$, with a 95\% confidence interval of $[0.947, 1.007]$, corresponding to approximately $2.3\%$ overhead. Read workloads showed differences of approximately $6.3\%$ to $8.8\%$ relative to the sanitized baseline.
+
+\textbf{Statistical Equivalence Testing Using TOST:} A statistically significant difference does not necessarily mean that two configurations are operationally different. For this reason, we used Two One-Sided Tests (TOST) \cite{schuirmann1987, lakens2018} to examine whether Dual-Layer RLS remained within a predefined performance-equivalence interval of $\pm 10\%$ relative to the sanitized baseline ($\theta_L = 0.90, \theta_U = 1.10$). For each paired run, the throughput ratio was log-transformed:
+\begin{equation}
+z_i = \ln\left(\frac{\text{Throughput}_{\text{Dual},i}}{\text{Throughput}_{\text{Sanitized},i}}\right)
+\end{equation}
+The reported TOST results rejected the null hypothesis of meaningful divergence for Paged List ($p = 2.33 \times 10^{-3}$), Tenant Count ($p = 3.22 \times 10^{-2}$), and Point Insert ($p = 5.55 \times 10^{-6}$). For point inserts, Cohen's $d = -0.98$, and the 95\% confidence interval $[0.947, 1.007]$ crosses 1.0, confirming that write performance remained practically equivalent to the sanitized baseline. Figure \ref{fig:ratio} presents the paired throughput ratios against the baseline alongside a $\pm 5\%$ visual equivalence corridor.
 
 \begin{figure*}[t]
 \centering
@@ -640,10 +719,6 @@ Rather than simply testing whether differences are statistically significant ($p
 \caption{System behavior under connection pool saturation scaling from 8 to 32 concurrent clients ($n = 30$ paired runs): (a) Transaction throughput under saturation; (b) Latency scaling and pool queueing. Pool contention and network transit dominate latency in high-concurrency cloud environments, dwarfing RLS evaluation cost.}
 \label{fig:concurrency_scaling}
 \end{figure*}
-
-\subsection{Evaluation Under Complex Real-World Workloads}
-Production multi-tenant workloads rarely resemble clean, isolated single-table lookups. Real applications execute multi-table joins, encounter extreme data skew across tenants, and operate under connection pool exhaustion. Table \ref{tab:complex_benchmarks} reports performance under these stressful conditions ($n = 30$ paired trials each).
-
 \begin{table}[t]
 \renewcommand{\arraystretch}{0.92}
 \caption{Complex Workload Evaluation: Joins, Tenant Skew, and Concurrency Saturation ($n=30$ Paired Runs)}
@@ -673,17 +748,17 @@ Whale tenant (25.0\% rows, 250k records) & $13,433 \pm 341$ & $9,568 \pm 350$ & 
 }
 \end{table}
 
-\textbf{Relational Graph Joins and Foreign Key Pushdown:}
-What happens when queries join multiple relations under row security? An un-tuned database engine might evaluate RLS rules after computing Cartesian products or intermediate hash joins, sending execution times off a cliff. PostgreSQL avoids this pitfall when schema foreign keys carry tenant qualifiers. In NexusOps, every foreign key incorporates the tenant identifier upfront (such as \texttt{(tenant\_id, order\_id)}), allowing the query planner to push the stable tenant predicate directly down into each relation's index scan. The executor chooses Nested Loop Inner Index Scans, never materializing cross-tenant intermediate hash tables. Throughput ratios relative to the raw baseline held firm at $0.731$ across two-table joins and $0.736$ across three-table joins (Table \ref{tab:complex_benchmarks}), demonstrating that join depth does not compound RLS overhead when composite indexes are in place.
+\subsection{Evaluation Under Complex Real-World Workloads}
+Typical production workloads involve more than isolated database lookups. Applications frequently execute joins across related tables, serve organizations with very different data volumes, and experience periods of high connection demand. To examine these conditions, we evaluated relational joins, tenant-size skew, and connection-pool saturation (Table \ref{tab:complex_benchmarks}, $n = 30$ paired runs each).
 
-\textbf{Tenant Skew and Generic Plan Caching:}
-Production cloud tenants rarely generate uniform workloads. In reality, tenant sizes follow an 80/20 Pareto distribution. We simulated this pattern across 100 client organizations, allocating 250,000 records (25\% of the entire database) to a single whale tenant while small accounts held just 500 records (0.05\%). B-tree traversal costs scale as $\mathcal{O}(\log N + k)$ where $k$ is the matched tuple count. Because \texttt{tenant\_id} anchors the leading position of all composite indexes, B-tree depth remains pinned at 3 levels across every organization, large or small. Shared buffer hit rates stayed above $99.8\%$, and dual-layer throughput remained essentially identical across tenant tiers ($9,296$ tps on small accounts versus $9,568$ tps on the whale account). After five executions, PostgreSQL transitions from custom query plans to cached generic plans; here the executor evaluates \texttt{current\_setting()} once during scan setup, preserving deterministic index probe execution.
+\textbf{Relational Graph Joins and Foreign-Key Pushdown:} Applying RLS to multiple related tables can affect query execution if tenant predicates are evaluated inefficiently during joins. NexusOps uses tenant-qualified foreign keys, such as \texttt{(tenant\_id, order\_id)}, allowing the tenant condition to participate in index-based access to related tables. In the evaluated workloads, PostgreSQL selected Nested Loop Inner Index Scan operations rather than materializing cross-tenant intermediate hash tables. Throughput ratios relative to the Filter-Only Baseline were $0.731$ $[0.712, 0.750]$ for two-table joins (\texttt{orders} $\bowtie$ \texttt{order\_items}) and $0.736$ $[0.720, 0.752]$ for three-table joins ($\bowtie$ \texttt{order\_payments}). The results indicate that the measured throughput ratio remained consistent when join depth increased, provided composite indexes and tenant-qualified relationships were in place.
 
-\textbf{Connection Pool Saturation and Queue Latency:}
-What happens when customer demand saturates the database connection pool? We tested this by stepping active client concurrency from 8 to 32 against our HikariCP pool (Fig. \ref{fig:concurrency_scaling}). At 32 concurrent clients—full pool exhaustion—mean transaction latency climbed from $1.05$ ms to $3.54$ ms on the baseline, and from $1.40$ ms to $4.94$ ms under dual-layer RLS; 99th percentile tail latencies rose to $9.59$ ms and $12.50$ ms respectively. In cloud environments, socket acquisition queuing and network serialization completely dominate the sub-millisecond overhead of row security. Across the entire HTTP pipeline (Spring Boot, HikariCP, JSON serialization), framework mechanics consume the overwhelming majority of total request latency (median $2.4$ ms, p99 $6.8$ ms).
+\textbf{Tenant Skew and Generic Plan Caching:} Real SaaS environments do not distribute records evenly across organizations. We evaluated an 80/20 Pareto-style distribution across 100 organizations: one large organization contained 250,000 records (25\% of the dataset), while smaller organizations contained 500 records each (0.05\%). The measured throughput ratios were $0.719$ $[0.703, 0.734]$ for small tenants ($9,296$ tps) and $0.713$ $[0.701, 0.725]$ for the whale tenant ($9,568$ tps). The composite indexes place \texttt{tenant\_id} at the leading position, keeping B-tree depth at three levels across all tenant sizes with shared-buffer hit rates above 99.8\%. After five executions, PostgreSQL transitioned from custom plans to cached generic plans, evaluating the session variable during scan initialization while retaining leading index-key probing.
+
+\textbf{Connection-Pool Saturation and Queue Latency:} We also examined how the system behaved as active client concurrency increased from 8 to 32 clients against the 32-connection HikariCP pool (Fig. \ref{fig:concurrency_scaling}). At 8 clients, mean transaction latency was $1.05$ ms on the baseline and $1.40$ ms on Dual-Layer RLS; at 32 clients (pool saturation), these values rose to $3.54$ ms and $4.94$ ms (p99 tail latency: $9.59$ ms and $12.50$ ms). Connection-pool contention and network queuing become the primary contributors to latency under saturation, dwarfing the sub-millisecond cost of evaluating RLS predicates. Across the full HTTP stack (Spring Boot, HikariCP, JSON serialization), median request latency was $2.4$ ms and p99 was $6.8$ ms.
 
 \subsection{Database Resource Utilization Profile}
-Does continuous policy enforcement strain underlying server hardware? We captured OS and database kernel telemetry during a sustained run of 1,000,000 transactions (Table \ref{tab:resources}).
+We collected operating-system and PostgreSQL telemetry during a sustained workload of 1,000,000 transactions (Table \ref{tab:resources}).
 
 \begin{table}[t]
 \renewcommand{\arraystretch}{0.95}
@@ -708,25 +783,24 @@ Backend Memory (MB / conn) & $8.4 \pm 0.4$ & $8.5 \pm 0.4$ & $8.6 \pm 0.5$ \\
 }
 \end{table}
 
-These telemetry captures show that forced RLS imposes practically zero memory overhead—maintaining $8.6$ MB per backend process compared to $8.4$ MB on the baseline—while shared buffer hit rates remain essentially untouched ($>99.8\%$). CPU utilization increases by approximately $3.3\%$ between the sanitized baseline and the dual-layer configuration, representing the exact compute expenditure of evaluating policy expressions within the PostgreSQL executor loop.
+Backend memory consumption changed only slightly, from $8.4$ MB per connection in the Filter-Only Baseline to $8.6$ MB under Dual-Layer RLS. Shared-buffer hit rates remained almost unchanged ($99.88\%$ vs $99.85\%$). User CPU utilization increased from $54.8\%$ in the Sanitized configuration to $58.1\%$ in the Dual-Layer configuration (system CPU from $10.1\%$ to $10.8\%$). The WAL write rate was $12.5$ MB/s vs $12.8$ MB/s, and context switches were 18,400 vs 19,100 per second. These measurements indicate that the evaluated RLS configuration introduced only a modest $3.3\%$ increase in CPU activity, while memory consumption and buffer hit rates remained essentially identical.
 
 \subsection{Query Execution Plan Analysis}
-Why does PostgreSQL handle forced row security with such minimal latency penalty? Inspecting query execution paths with \texttt{EXPLAIN (ANALYZE, BUFFERS, VERBOSE)} clarifies the mechanics. On aggregation queries, both baseline and dual-layer configurations yield the exact same plan shape: an \textit{Index-Only Scan} over composite index \texttt{(tenant\_id, id)}, pulling records straight out of shared memory buffers.
-
-The efficiency stems from PostgreSQL classifying \texttt{current\_setting()} as a \texttt{STABLE} function. Stable functions are guaranteed not to alter session state within a single statement, allowing the query planner to evaluate the session variable once at scan startup via a \texttt{One-Time Filter} rather than re-evaluating it for every candidate row. With prepared statements active (\texttt{plan\_cache\_mode = auto}), the executor evaluates the variable at scan initialization and executes a direct index probe on the leading index key \texttt{tenant\_id}.
+To understand why the measured database-level overhead remained limited, we inspected PostgreSQL execution plans using \texttt{EXPLAIN (ANALYZE, BUFFERS, VERBOSE)}. For the evaluated aggregation queries, the Filter-Only Baseline and Dual-Layer configurations produced the same general execution-plan structure: an Index-Only Scan over composite index \texttt{(tenant\_id, id)}, retrieving records directly from shared memory buffers.
 
 \section{Developer Experience and Operational Case Study}
-\label{sec:devex}
+\label{sec:developer_experience}
+
+Security mechanisms that impose excessive operational complexity or cognitive friction often suffer from poor compliance and eventual circumvention. To assess the practical viability of dual-layer tenant isolation, we evaluate developer ergonomics, schema migration workflows, and diagnostic support procedures implemented in NexusOps.
 
 \subsection{Developer Ergonomics and Cognitive Load}
-Security designs that fight against developer workflow fail the moment deadlines tighten. If engineers must remember to attach manual tenant filters to every repository query, human error is simply a matter of time. One tired developer pushing an emergency patch late at night can compromise thousands of customer records.
+Under a conventional application-only filtering model, developers bear ongoing cognitive responsibility for verifying tenant parameters across every query construct. In contrast, the dual-layer approach establishes tenant isolation as an infrastructural default.
 
-NexusOps shifts this defensive burden away from developer vigilance and onto framework conventions and database storage mechanics.
-For standard CRUD operations, entity boilerplate vanishes entirely. Instead of configuring custom DAOs or query interceptors, an engineer simply extends \texttt{TenantEntity}. Hibernate's bytecode enhancer inspects the \texttt{@TenantId} annotation and injects tenant filter criteria into generated SQL automatically.
-Custom native queries fail safely rather than leaking data. If someone writes a raw SQL query with \texttt{createNativeQuery()} or Spring Data's \texttt{@Query(nativeQuery = true)} and forgets the tenant discriminator, the mistake does not create a security breach. PostgreSQL's kernel enforces the forced RLS policy, returning only records matching the active transaction's session variable.
-Local CI feedback is equally uncompromising. When a developer drafts a Flyway migration script that creates a table without enabling forced RLS, our catalog integration test (\texttt{RlsCoverageIT}) fails the build in $4.2$ seconds on a local laptop, providing compiler-style feedback before code review.
+When writing standard domain logic, developers simply extend \texttt{TenantEntity}. The base class encapsulates the \texttt{@TenantId} discriminator, which Hibernate resolves automatically through the registered context resolver. Developers write idiomatic Spring Data repository methods without manually qualifying queries with tenant parameters.
 
-Table \ref{tab:devex} contrasts day-to-day engineering workflows between traditional application-managed scoping and our dual-layer model.
+The database layer provides an additional safeguard for queries that do not pass through the normal ORM filtering mechanism. For example, a developer may use \texttt{createNativeQuery()} or Spring Data's \texttt{@Query(nativeQuery = true)} without including the tenant discriminator. In an application-only filtering design, this omission could expose records from other tenants. In NexusOps, forced PostgreSQL RLS applies the active transaction's tenant context to the query and restricts the returned rows.
+
+The same approach is used during database development. If a developer creates a new table through a Flyway migration but forgets to enable and force RLS, the \texttt{RlsCoverageIT} catalog integration test detects the missing policy configuration. The test runs as part of the local CI workflow and fails the build within $4.2$ seconds on a local laptop. Table \ref{tab:devex} compares the development and maintenance effort between traditional application-level filtering and our Dual-Layer approach.
 
 \begin{table}[t]
 \renewcommand{\arraystretch}{0.95}
@@ -752,43 +826,36 @@ Rollback Risk on Schema Migration & High (forgotten filters) & Zero (pre-commit 
 \end{table}
 
 \subsection{Zero-Downtime Schema Evolution}
-Running database migrations on an active 24/7 SaaS backend leaves no room for scheduled maintenance windows. NexusOps links Flyway migration scripts directly with automated policy enforcement. Adding a new customer-facing table follows a strict four-stage sequence. Migration DDL defines the table structure using a composite primary key anchored on \texttt{(tenant\_id, id)}. It immediately issues \texttt{ALTER TABLE ... ENABLE ROW LEVEL SECURITY} followed by \texttt{FORCE ROW LEVEL SECURITY}, then binds the canonical tenant policy matching our AST template. Before any migration script can land in staging, our CI/CD pipeline spins up a fresh Testcontainers PostgreSQL instance and runs \texttt{RlsCoverageIT}. Any table lacking validated policy coverage fails the build automatically.
+Database schema changes are particularly important in SaaS applications that must remain available throughout the day. NexusOps connects Flyway migrations with automated RLS policy verification. When a new tenant-facing table is added, the migration follows a defined sequence: creating the table with composite primary key \texttt{(tenant\_id, id)}, enabling row-level security via \texttt{ALTER TABLE ... ENABLE ROW LEVEL SECURITY}, applying \texttt{FORCE ROW LEVEL SECURITY}, and creating the canonical tenant policy. Before proceeding to staging, CI/CD starts a fresh PostgreSQL instance via Testcontainers and runs \texttt{RlsCoverageIT}, failing automatically if policy coverage is missing.
 
 \subsection{Segregated Customer Support Workflows}
-Enterprise support teams routinely require access to customer accounts to diagnose billing discrepancies or investigate data synchronization errors. In naive architectures, internal support dashboards often bypass tenant filters using superuser credentials, opening dangerous backdoor attack surfaces.
-
-NexusOps prevents administrative bypasses through strict workflow segregation. Diagnostic consoles communicate exclusively through a separate connection pool (\texttt{PlatformAdminDataSource}) tied to the restricted database role \texttt{nexusops\_platform}. When support engineers must view tenant records, they cannot impersonate accounts on demand; access requires a short-lived (5-minute) support token granted only through two-person approval tied to an active customer ticket. To preserve audit accountability, every query executed in support mode writes an immutable row into the append-only \texttt{audit\_events} table, recording the operator identity, target organization ID, incident ticket reference, and the SHA-256 hash of the executed SQL text.
+Diagnostic consoles connect through a dedicated connection pool named \texttt{PlatformAdminDataSource}, using the restricted role \texttt{nexusops\_platform}. Support engineers obtain short-lived 5-minute tokens requiring two-person approval linked to active customer tickets. Every query logs an immutable entry in \texttt{audit\_events} containing operator identity, target organization ID, ticket reference, and the SHA-256 hash of the executed SQL statement.
 
 \section{Discussion and Threats to Validity}
 \label{sec:threats}
 
-\textbf{Internal Validity:} We ran all microbenchmarks on dedicated bare-metal hardware with fixed CPU affinity and isolated memory allocations. To eliminate JVM JIT warmup artifacts and buffer priming distortions, we enforced randomized trial ordering and discarded initial warmup runs \cite{georges2007}. Tables were truncated, re-seeded, and vacuumed between write cycles to prevent dead-tuple bloat from skewing later runs.
+\textbf{Internal Validity:} Performance experiments ran on dedicated bare-metal hardware with fixed CPU affinity and isolated memory allocations. To limit variations from JVM JIT compilation and buffer priming, we randomized trial order and excluded warm-up runs \cite{georges2007}. Tables were truncated, reseeded, and vacuumed between write cycles to prevent dead-tuple accumulation from affecting subsequent measurements.
 
-\textbf{External Validity:} Production systems feature complex relational graphs and heavily skewed data distributions. Our evaluation explicitly tested multi-table joins (up to three relations) and heavy-tailed 80/20 Pareto customer distributions (Table \ref{tab:complex_benchmarks}). While deep recursive graph queries or un-indexed predicates might exhibit different query planner choices, typical enterprise SaaS workloads following composite indexing conventions maintain stable index-scan characteristics across join hierarchies.
+\textbf{External Validity:} Production SaaS applications feature complex relationships and skewed customer data distributions. We evaluated joins across up to three relations and 80/20 Pareto distributions (Table \ref{tab:complex_benchmarks}). While deep recursive graph queries or unindexed predicates may lead PostgreSQL to choose different execution plans, enterprise workloads following composite indexing conventions maintain stable index-scan behavior across join hierarchies.
 
-\textbf{Construct Validity and Attacker Capabilities:} As formalized in Section \ref{sec:threat_model}, our security model differentiates between specific vulnerability classes: (1) application-tier omissions and raw SQL queries are caught at the database kernel by forced RLS; (2) IDOR attacks are blocked at both Layer 1 and Layer 2; (3) connection-pool session bleeding is prevented via transaction-lifecycle hooks. However, we do not claim that RLS solves arbitrary SQL injection. If an adversary injects arbitrary SQL as the database application role, they inherit that role's execution capabilities. While \texttt{nexusops\_app} lacks \texttt{BYPASSRLS}, superuser privileges, and DDL rights, an attacker executing arbitrary SQL could still invoke \texttt{set\_config()} to switch tenant contexts. Perimeter query parameterization and prepared statements remain indispensable.
+\textbf{Construct Validity and Attacker Capabilities:} The threat model distinguishes vulnerability classes: ORM omissions and native queries are intercepted by RLS; IDOR attempts are blocked at both layers; connection bleeding is prevented via transaction hooks. However, RLS does not protect against arbitrary SQL injection executed under application privileges, as an attacker could invoke \texttt{set\_config()} directly. Parameterized queries and prepared statements remain indispensable.
 
-\textbf{Policy Complexity Considerations:} Our benchmarks evaluated equality policies operating over indexed columns. Defining complex policies that invoke sub-queries or non-leakproof PL/pgSQL functions can inhibit query plan pushdown, increasing per-row CPU costs. Teams adopting database-level RLS should keep tenant predicates simple and index-aligned.
+\textbf{Policy Complexity Considerations:} We evaluated equality policies operating over indexed columns. Policies using subqueries or non-leakproof functions may impede index pushdown, increasing per-row CPU costs. Tenant policies should remain simple and index-aligned.
 
 \section{Limitations and Future Work}
 \label{sec:limitations}
-While dual-layer isolation offers robust isolation guarantees with negligible overhead, several practical engineering constraints deserve discussion.
+Although dual-layer isolation provides strong tenant isolation with low measured overhead, several practical constraints remain.
 
-Connection pooling tiers introduce architectural nuances. In high-density deployments utilizing external transaction poolers like PgBouncer or Odyssey, transaction-local settings (\texttt{is\_local = true}) function cleanly under transaction-pooling mode; however, intermediate proxy multiplexing was not directly evaluated in our physical testbed.
-AI workloads leveraging \texttt{pgvector} also pose unique considerations. Applying row-level filter expressions across high-dimensional HNSW vector graphs can degrade search recall if filtering occurs after graph traversal rather than during vector index probing. Large-scale similarity search typically benefits from dedicated per-tenant vector partitions.
-Token lifecycles also present an operational trade-off. Our 15-minute JWT lifespan leaves a narrow temporal window where compromised credentials might remain valid unless actively cross-referenced against a distributed Redis revocation set.
-Lastly, our empirical measurements focus on single-node PostgreSQL deployments. Horizontally distributed architectures—such as Citus, CockroachDB, or Google Cloud Spanner—introduce distributed consensus and cross-node coordination overhead that warrants independent benchmarking.
-
-We intend to extend this research by profiling distributed multi-region databases under forced row security and developing cryptographically signed database session tokens verified directly within the database engine.
+External transaction poolers such as PgBouncer or Odyssey multiplex connections across clients. Transaction-local settings (\texttt{is\_local = true}) operate cleanly in transaction-pooling mode, but intermediate proxy multiplexing was not directly evaluated in our physical testbed. High-dimensional vector search using \texttt{pgvector} also introduces considerations; applying RLS predicates across HNSW graphs can degrade recall if filtering occurs after traversal rather than during index probing. Per-tenant vector partitioning may offer a more predictable design. In addition, 15-minute JWT lifetimes leave a window where compromised tokens remain active unless revoked via Redis. Finally, our benchmarks evaluate single-node PostgreSQL; distributed architectures (Citus, CockroachDB, Spanner) introduce distributed consensus costs requiring independent evaluation. Future work will investigate multi-region deployments and cryptographically signed session tokens verified within the database engine.
 
 \section{Conclusion}
 \label{sec:conclusion}
-We designed NexusOps around an unavoidable reality in software engineering: developers operating under aggressive product schedules will eventually make mistakes. Betting enterprise data safety on perfect query discipline across hundreds of thousands of lines of application code is an unacceptable operational gamble. By pairing application-tier ORM scoping with database-engine forced Row-Level Security, multi-tenant SaaS platforms gain resilient defense-in-depth against silent cross-tenant data leaks. Automated catalog verification in continuous integration, fail-closed startup role inspection, and transaction-scoped connection sanitization systematically eliminate classic vulnerabilities such as schema drift, connection pool contamination, and privilege misconfiguration.
+Relying entirely on developer discipline to enforce tenant isolation across shared-schema SaaS databases creates an ongoing operational risk. A missing tenant filter in a single query can compromise confidential records. NexusOps addresses this challenge by combining application-level ORM filtering with PostgreSQL forced Row-Level Security, providing defense-in-depth against data leakage. Automated catalog verification in CI, startup role checks, and transaction-scoped connection sanitization systematically eliminate configuration drift, connection pool contamination, and privilege escalation.
 
-Our empirical evaluation over 1,000,000 domain records ($n = 30$ paired trials) shows that database-level forced RLS introduces modest engine overhead—between $2.3\%$ and $8.8\%$ over sanitized baselines—with Two One-Sided Tests verifying statistical equivalence within an operational $\pm 10\%$ corridor ($p < 0.05$). The platform sustains sub-millisecond median latencies and predictable p99 tail bounds across multi-table joins, heavily skewed Pareto customer distributions, and saturated connection pools. By delegating tenant boundary enforcement from fallible human discipline to hardened database kernel invariants, dual-layer isolation offers engineering teams an empirically validated foundation for building secure, scalable multi-tenant SaaS platforms.
+Our empirical evaluation over 1,000,000 records ($n = 30$ paired trials) demonstrates that database-level forced RLS introduces modest overhead ($2.3\%$ to $8.8\%$ over sanitized baselines), with Two One-Sided Tests confirming statistical equivalence within an operational $\pm 10\%$ corridor. The platform sustains low latency across multi-table joins, skewed tenant distributions, and saturated connection pools. By shifting tenant boundary enforcement from developer discipline to database kernel invariants, dual-layer isolation provides a robust and practical foundation for multi-tenant SaaS systems.
 
 \section*{Acknowledgment and Declarations}
-The authors acknowledge computing resources and research support provided by the Department of Information Technology, MIT School of Computing, MIT ADT University, Pune. \textbf{Funding:} No external funding supported this study. \textbf{Author Contributions:} I.~Poonawala and V.~Mandhare designed the dual-layer architecture, developed the platform, and performed experimental evaluations. T.~Shinde engineered catalog guardrails and automated test harnesses. Prof.~R.~Kerketta advised the project and reviewed the theoretical foundations. Corresponding author: Varad Mandhare (varadmandhare924@gmail.com). \textbf{Data Availability:} Benchmark scripts, test suites, and raw CSV run logs ($n=30$) are open-source at \url{https://github.com/Varadha9/multi-tenant-saas-platform}. \textbf{Conflict of Interest:} None declared. Large language models were consulted strictly for mechanical phrasing refinement under human author review.
+The authors acknowledge computing resources and research support provided by the Department of Information Technology, MIT School of Computing, MIT ADT University, Pune. \textbf{Funding:} No external funding supported this study. \textbf{Author Contributions:} I.~Poonawala and V.~Mandhare designed the dual-layer architecture, developed the platform, and performed experimental evaluations. T.~Shinde engineered catalog guardrails and automated test harnesses. Prof.~R.~Kerketta advised the project and reviewed the theoretical foundations. Corresponding author: Varad Mandhare (varadmandhare924@gmail.com). \textbf{Data Availability:} Benchmark scripts, test suites, and raw CSV run logs ($n=30$) are available at \url{https://github.com/Varadha9/multi-tenant-saas-platform}. \textbf{Conflict of Interest:} The authors declare no conflict of interest. \textbf{Use of Large Language Models:} Large language models were consulted for mechanical phrasing refinement under author review.
 
 \newpage
 \bibliographystyle{IEEEtran}
